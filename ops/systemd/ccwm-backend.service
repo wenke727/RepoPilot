@@ -1,0 +1,14 @@
+[Unit]
+Description=Claude Code Web Manager Backend
+After=network.target
+
+[Service]
+Type=simple
+User=wenke
+WorkingDirectory=%h/Agent
+ExecStart=%h/Agent/ops/run_backend.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
