@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
 import TaskCard from '../components/TaskCard'
 import TaskComposer from '../components/TaskComposer'
-import TaskDrawer from '../components/TaskDrawer'
-import type { BoardResponse, NotificationItem, RepoConfig, Task } from '../types'
+import type { BoardResponse, NotificationItem, RepoConfig } from '../types'
 
 const COLUMN_MAP: Array<{ key: string; title: string }> = [
   { key: 'TODO', title: '待开发' },
@@ -14,7 +13,7 @@ const COLUMN_MAP: Array<{ key: string; title: string }> = [
   { key: 'CANCELLED', title: '已取消' },
 ]
 
-export default function BoardPage() {
+export default function BoardPage({ onOpenTask }: { onOpenTask: (taskId: string) => void }) {
   const [repos, setRepos] = useState<RepoConfig[]>([])
   const [selectedRepoId, setSelectedRepoId] = useState('')
   const [board, setBoard] = useState<BoardResponse>({
@@ -22,7 +21,6 @@ export default function BoardPage() {
     counts: { TODO: 0, RUNNING: 0, REVIEW: 0, DONE: 0, FAILED: 0, CANCELLED: 0 },
   })
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
-  const [activeTask, setActiveTask] = useState<Task | null>(null)
   const [error, setError] = useState('')
   const [selectedPlanTaskIds, setSelectedPlanTaskIds] = useState<Set<string>>(new Set())
   const [batchFeedback, setBatchFeedback] = useState('')
@@ -270,7 +268,7 @@ export default function BoardPage() {
                       key={task.id}
                       task={task}
                       columnKey={column.key}
-                      onOpen={setActiveTask}
+                      onOpen={(task) => onOpenTask(task.id)}
                       selectable={task.status === 'PLAN_REVIEW'}
                       selected={selectedPlanTaskIds.has(task.id)}
                       onToggleSelect={togglePlanTask}
@@ -283,16 +281,6 @@ export default function BoardPage() {
         })}
       </section>
 
-      <TaskDrawer
-        task={activeTask}
-        onClose={() => setActiveTask(null)}
-        onChanged={async () => {
-          await refreshAll()
-          if (activeTask) {
-            setActiveTask(await api.getTask(activeTask.id))
-          }
-        }}
-      />
     </div>
   )
 }
