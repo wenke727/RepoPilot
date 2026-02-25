@@ -208,6 +208,126 @@ class TaskRunner:
             }
         )
 
+    def _cleanup_exec_worktree_for_run(
+        self,
+        task: Task,
+        run_id: str,
+        trigger_status: TaskStatus,
+        snapshot_on_failure: bool,
+    ) -> bool:
+        run = self.store.get_run(run_id)
+        if run is None:
+            self.logger.warning("Skip worktree cleanup: run not found task=%s run=%s", task.id, run_id)
+            self.store.append_event(
+                task.id,
+                {
+                    "type": "worktree_cleanup",
+                    "trigger_status": trigger_status.value,
+                    "result": "run_not_found",
+                    "run_id": run_id,
+                },
+            )
+            return False
+
+        worktree_path = run.worktree_path.strip()
+        if not worktree_path:
+            self.store.append_event(
+                task.id,
+                {
+                    "type": "worktree_cleanup",
+                    "trigger_status": trigger_status.value,
+                    "result": "skip_empty_path",
+                    "run_id": run_id,
+                },
+            )
+            return True
+
+        repo = self.store.get_repo(task.repo_id)
+        if repo is None:
+            self.logger.warning("Skip worktree cleanup: repo not found task=%s repo=%s", task.id, task.repo_id)
+            self.store.append_event(
+                task.id,
+                {
+                    "type": "worktree_cleanup",
+                    "trigger_status": trigger_status.value,
+                    "result": "repo_not_found",
+                    "run_id": run_id,
+                    "worktree_path": worktree_path,
+                },
+            )
+            return False
+
+        worktree = Path(worktree_path)
+        if snapshot_on_failure:
+            try:
+                snapshot = git_ops.snapshot_worktree(
+                    worktree=worktree,
+                    artifacts_root=self.settings.artifacts_dir,
+                    task_id=task.id,
+                    run_id=run_id,
+                )
+                self.store.update_run(run_id, {"metrics": {"artifact_path": str(snapshot)}})
+                self.store.append_event(task.id, {"type": "artifact", "path": str(snapshot)})
+                self.logger.info("Saved failed task artifact task=%s run=%s path=%s", task.id, run_id, snapshot)
+            except Exception as exc:  # pragma: no cover
+                self.logger.warning("Failed to save task artifact task=%s run=%s err=%s", task.id, run_id, exc)
+
+        try:
+            git_ops.cleanup_worktree(repo, worktree, run.branch_name)
+            self.store.update_run(run_id, {"worktree_path": ""})
+            self.store.append_event(
+                task.id,
+                {
+                    "type": "worktree_cleanup",
+                    "trigger_status": trigger_status.value,
+                    "result": "success",
+                    "run_id": run_id,
+                    "worktree_path": worktree_path,
+                    "branch_name": run.branch_name,
+                },
+            )
+            return True
+        except Exception as exc:  # pragma: no cover
+            self.logger.warning("Worktree cleanup failed task=%s run=%s err=%s", task.id, run_id, exc)
+            self.store.append_event(
+                task.id,
+                {
+                    "type": "worktree_cleanup",
+                    "trigger_status": trigger_status.value,
+                    "result": "failed",
+                    "run_id": run_id,
+                    "worktree_path": worktree_path,
+                    "branch_name": run.branch_name,
+                    "error_message": str(exc)[:500],
+                },
+            )
+            return False
+
+    def cleanup_exec_worktree_for_task(
+        self,
+        task: Task,
+        trigger_status: TaskStatus,
+        snapshot_on_failure: bool = False,
+    ) -> bool:
+        if task.mode != TaskMode.EXEC:
+            return False
+        if not task.current_run_id:
+            self.store.append_event(
+                task.id,
+                {
+                    "type": "worktree_cleanup",
+                    "trigger_status": trigger_status.value,
+                    "result": "skip_no_current_run",
+                },
+            )
+            return False
+        return self._cleanup_exec_worktree_for_run(
+            task=task,
+            run_id=task.current_run_id,
+            trigger_status=trigger_status,
+            snapshot_on_failure=snapshot_on_failure,
+        )
+
     def run_task(self, task: Task, worker_id: str) -> None:
         selected_env = select_conda_env()
         self.logger.info(
@@ -363,16 +483,9 @@ class TaskRunner:
             if worktree_info is not None:
                 task_after = self.store.get_task(task.id)
                 if task_after and task_after.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
-                    try:
-                        snapshot = git_ops.snapshot_worktree(
-                            worktree=worktree_info.path,
-                            artifacts_root=self.settings.artifacts_dir,
-                            task_id=task.id,
-                            run_id=run_id,
-                        )
-                        self.store.update_run(run_id, {"metrics": {"artifact_path": str(snapshot)}})
-                        self.store.append_event(task.id, {"type": "artifact", "path": str(snapshot)})
-                        self.logger.info("Saved failed task artifact task=%s run=%s path=%s", task.id, run_id, snapshot)
-                    except Exception as exc:  # pragma: no cover
-                        self.logger.warning("Failed to save task artifact task=%s run=%s err=%s", task.id, run_id, exc)
-                git_ops.cleanup_worktree(repo, worktree_info.path, worktree_info.branch)
+                    self._cleanup_exec_worktree_for_run(
+                        task=task_after,
+                        run_id=run_id,
+                        trigger_status=task_after.status,
+                        snapshot_on_failure=True,
+                    )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.api.deps import get_scheduler, get_store
+from app.api.deps import get_runner, get_scheduler, get_store
 from app.core.event_display import enrich_event_for_display
 from app.core.plan_parser import build_exec_prompt
 from app.models import (
@@ -81,7 +81,7 @@ def retry_task(task_id: str, payload: TaskRetryInput, store: JsonStore = Depends
 
 
 @router.post("/{task_id}/done", response_model=Task)
-def mark_done(task_id: str, store: JsonStore = Depends(get_store)):
+def mark_done(task_id: str, store: JsonStore = Depends(get_store), runner=Depends(get_runner)):
     task = store.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
@@ -89,6 +89,12 @@ def mark_done(task_id: str, store: JsonStore = Depends(get_store)):
         raise HTTPException(status_code=400, detail=f"task status must be REVIEW, got {task.status}")
     patched = store.update_task(task_id, {"status": TaskStatus.DONE.value})
     assert patched is not None
+    if patched.mode == TaskMode.EXEC:
+        runner.cleanup_exec_worktree_for_task(
+            patched,
+            trigger_status=TaskStatus.DONE,
+            snapshot_on_failure=False,
+        )
     return patched
 
 

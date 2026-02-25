@@ -1,5 +1,5 @@
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 import re
 import subprocess
 
@@ -101,7 +101,7 @@ def test_board_plan_review_maps_to_review(tmp_path: Path):
     assert counts['REVIEW'] == 1
 
 
-def test_new_ids_use_short_timestamp_format(tmp_path: Path):
+def test_new_ids_use_daily_sequence_format(tmp_path: Path):
     store = create_store(tmp_path)
     repo_root = tmp_path / 'repos' / 'demo'
     repo_root.mkdir(parents=True)
@@ -144,13 +144,13 @@ def test_new_ids_use_short_timestamp_format(tmp_path: Path):
         }
     )
 
-    pattern = re.compile(r'^\d{6}_\d{6}$')
+    pattern = re.compile(r'^\d{6}-\d{3}$')
     assert pattern.match(task.id)
     assert pattern.match(run.id)
     assert pattern.match(notif.id)
 
 
-def test_task_id_collision_waits_for_next_second(tmp_path: Path, monkeypatch):
+def test_task_id_sequence_increments_within_day(tmp_path: Path, monkeypatch):
     store = create_store(tmp_path)
     repo_root = tmp_path / 'repos' / 'demo'
     repo_root.mkdir(parents=True)
@@ -174,25 +174,18 @@ def test_task_id_collision_waits_for_next_second(tmp_path: Path, monkeypatch):
         store._write_json_atomic(store.repos_file, rows)
 
     first_ts = datetime(2026, 2, 10, 23, 11, 11)
-    second_ts = first_ts + timedelta(seconds=1)
 
     with store._lock('tasks'):
         rows = store._read_json(store.tasks_file)
-        rows.append({'id': first_ts.strftime('%y%m%d_%H%M%S')})
+        rows.append({'id': first_ts.strftime('%y%m%d-001')})
         store._write_json_atomic(store.tasks_file, rows)
 
     class FakeDateTime:
-        values = [first_ts, second_ts]
-        idx = 0
-
         @classmethod
         def now(cls):
-            val = cls.values[min(cls.idx, len(cls.values) - 1)]
-            cls.idx += 1
-            return val
+            return first_ts
 
     monkeypatch.setattr('app.store.json_store.datetime', FakeDateTime)
-    monkeypatch.setattr('app.store.json_store.time.sleep', lambda _: None)
 
     task = store.create_task(
         {
@@ -204,7 +197,57 @@ def test_task_id_collision_waits_for_next_second(tmp_path: Path, monkeypatch):
             'priority': 0,
         }
     )
-    assert task.id == second_ts.strftime('%y%m%d_%H%M%S')
+    assert task.id == first_ts.strftime('%y%m%d-002')
+
+
+def test_task_id_overflow_falls_back_to_timestamp(tmp_path: Path, monkeypatch):
+    store = create_store(tmp_path)
+    repo_root = tmp_path / 'repos' / 'demo'
+    repo_root.mkdir(parents=True)
+    (repo_root / '.git').mkdir()
+
+    with store._lock('repos'):
+        rows = store._read_json(store.repos_file)
+        rows.append(
+            {
+                'id': 'demo',
+                'name': 'demo',
+                'root_path': str(repo_root),
+                'main_branch': 'main',
+                'test_command': 'npm test',
+                'github_repo': 'owner/demo',
+                'shared_symlink_paths': [],
+                'forbidden_symlink_paths': ['PROGRESS.md'],
+                'enabled': True,
+            }
+        )
+        store._write_json_atomic(store.repos_file, rows)
+
+    first_ts = datetime(2026, 2, 10, 23, 11, 11)
+
+    with store._lock('tasks'):
+        rows = store._read_json(store.tasks_file)
+        rows.extend({'id': f"{first_ts.strftime('%y%m%d')}-{idx:03d}"} for idx in range(1, 1000))
+        store._write_json_atomic(store.tasks_file, rows)
+
+    class FakeDateTime:
+        @classmethod
+        def now(cls):
+            return first_ts
+
+    monkeypatch.setattr('app.store.json_store.datetime', FakeDateTime)
+
+    task = store.create_task(
+        {
+            'repo_id': 'demo',
+            'title': 'overflow',
+            'prompt': 'prompt',
+            'mode': TaskMode.EXEC.value,
+            'permission_mode': 'BYPASS',
+            'priority': 0,
+        }
+    )
+    assert task.id == first_ts.strftime('%y%m%d_%H%M%S')
 
 
 def test_legacy_id_still_readable(tmp_path: Path):

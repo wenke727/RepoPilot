@@ -93,6 +93,19 @@ class JsonStore:
         os.replace(tmp_path, file_path)
 
     def _next_id(self, existing_ids: set[str], max_wait_seconds: float = 3.0) -> str:
+        day_prefix = datetime.now().strftime("%y%m%d")
+        seq_pattern = re.compile(rf"^{re.escape(day_prefix)}-(\d{{3}})$")
+        current_max = 0
+        for existing_id in existing_ids:
+            match = seq_pattern.match(existing_id)
+            if not match:
+                continue
+            current_max = max(current_max, int(match.group(1)))
+
+        if current_max < 999:
+            return f"{day_prefix}-{current_max + 1:03d}"
+
+        # Overflow fallback keeps compatibility with existing timestamp IDs.
         deadline = time.monotonic() + max_wait_seconds
         while True:
             candidate = datetime.now().strftime("%y%m%d_%H%M%S")
@@ -562,6 +575,14 @@ class JsonStore:
                 return None
             self._write_json_atomic(self.runs_file, runs)
         return TaskRun.model_validate(target)
+
+    def get_run(self, run_id: str) -> TaskRun | None:
+        with self._lock("runs"):
+            runs = self._read_json(self.runs_file)
+        for row in runs:
+            if row.get("id") == run_id:
+                return TaskRun.model_validate(row)
+        return None
 
     def list_runs(self, task_id: str | None = None) -> list[TaskRun]:
         with self._lock("runs"):

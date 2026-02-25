@@ -39,9 +39,10 @@
 
 ## ID 规则
 
-- 新的 `task.id`、`run.id`、`notification.id` 使用格式：`YYMMDD_HHMMSS`
-- 示例：`260210_231111`
-- 同秒冲突策略：等待到下一秒以确保 ID 唯一
+- 新的 `task.id`、`run.id`、`notification.id` 使用格式：`YYMMDD-NNN`
+- 示例：`260210-001`
+- 同日同类型递增分配（`task`、`run`、`notification` 各自独立计数）
+- 若同日同类型超过 `999`，回退到 `YYMMDD_HHMMSS` 格式并按秒去重
 - 旧的长 ID 仍可读取（无需迁移）
 
 ## 运行要求
@@ -65,6 +66,8 @@ conda run -n dl2 pip install -r requirements.txt || conda run -n base pip instal
 
 ```bash
 ./ops/run_backend.sh
+# 代码变更自动重载
+./ops/run_backend.sh --reload
 ```
 
 ### 3. 安装并启动前端
@@ -73,6 +76,10 @@ conda run -n dl2 pip install -r requirements.txt || conda run -n base pip instal
 cd frontend
 npm install
 npm run dev
+# 或用包装脚本（Vite 默认已开启 HMR）
+./ops/run_frontend.sh
+# 强制重建依赖并刷新（等价于 vite --force）
+./ops/run_frontend.sh --reload
 ```
 
 ## API 概览
