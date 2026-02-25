@@ -542,6 +542,47 @@ select {
   font-size: 12px;
 }
 
+.task-detail-page {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  padding: 16px;
+}
+
+.task-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.task-detail-header h3 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.task-detail-row {
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.task-detail-error {
+  margin-top: 8px;
+  border: 1px solid #e8c8c8;
+  border-radius: 8px;
+  background: #fff2f2;
+  padding: 8px;
+  color: #7f2a2a;
+}
+
+.task-detail-actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .drawer-mask {
   position: fixed;
   inset: 0;
