@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { api } from '../api/client'
 import type { Task, TaskEvent, TaskEventDisplay, TaskEventDisplayGroup } from '../types'
 
@@ -44,11 +46,18 @@ interface ChatBlock extends LogBlock {
   isRangedSeq: boolean
 }
 
+interface ActivityDigest {
+  summary: string
+  detailLines: string[]
+}
+
 const LOG_EVENT_LIMIT = 2000
 const LOG_BLOCK_LIMIT = 300
-const PREVIEW_LIMIT = 600
-const MERGED_PREVIEW_LIMIT = 4000
 const FOLLOW_BOTTOM_THRESHOLD = 24
+const ACTIVITY_LINE_PATTERN =
+  /^(Explored\b|Listed files\b|Read\b|Searched for\b|Background terminal finished with\b|Success\b|Opened\b|Clicked\b|Ran\b)/i
+const ACTIVITY_MAX_LINES = 36
+const ACTIVITY_MAX_LINE_LENGTH = 260
 
 const GROUP_LABELS: Record<TaskEventDisplayGroup, string> = {
   command: '命令',
@@ -104,8 +113,7 @@ function asDisplayGroup(value: string): TaskEventDisplayGroup {
 }
 
 function truncatePreview(text: string): string {
-  if (text.length <= PREVIEW_LIMIT) return text
-  return `${text.slice(0, PREVIEW_LIMIT)}…`
+  return text
 }
 
 function toRawEventJson(event: TaskEvent): string {
@@ -352,17 +360,21 @@ function toLogEntry(event: TaskEvent, index: number): LogEntry {
 
 function appendMergedMessage(prev: string, next: string): string {
   if (!next) return prev
-  if (!prev) return next.length <= MERGED_PREVIEW_LIMIT ? next : `${next.slice(0, MERGED_PREVIEW_LIMIT)}…`
-  const merged = `${prev}\n${next}`
-  if (merged.length <= MERGED_PREVIEW_LIMIT) return merged
-  return `${merged.slice(0, MERGED_PREVIEW_LIMIT)}…`
+  if (!prev) return next
+  return `${prev}\n${next}`
+}
+
+function shouldMergeEntry(prev: LogBlock | undefined, entry: LogEntry): boolean {
+  if (!prev) return false
+  if (entry.group === 'output' || entry.group === 'result') return false
+  return prev.mergeKey === entry.mergeKey
 }
 
 function mergeLogEntries(entries: LogEntry[]): LogBlock[] {
   const blocks: LogBlock[] = []
   for (const entry of entries) {
     const prev = blocks[blocks.length - 1]
-    if (prev && prev.mergeKey === entry.mergeKey) {
+    if (shouldMergeEntry(prev, entry)) {
       prev.count += 1
       prev.seqEnd = entry.seq
       prev.time = entry.time
@@ -392,6 +404,38 @@ function toChatRole(group: TaskEventDisplayGroup): ChatRole {
   return 'system'
 }
 
+function toBubbleTextClass(group: TaskEventDisplayGroup): string {
+  if (group === 'output' || group === 'artifact' || group === 'protocol') {
+    return 'chat-bubble-text chat-bubble-text-mono'
+  }
+  return 'chat-bubble-text'
+}
+
+function shouldRenderMarkdown(group: TaskEventDisplayGroup): boolean {
+  return group === 'output' || group === 'result'
+}
+
+function toActivityDigest(message: string): ActivityDigest | null {
+  if (!message || message.includes('```')) return null
+  const lines = message
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+  if (lines.length < 2 || lines.length > ACTIVITY_MAX_LINES) return null
+  if (lines.some((line) => line.length > ACTIVITY_MAX_LINE_LENGTH)) return null
+
+  const matchedIndexes: number[] = []
+  for (let index = 0; index < lines.length; index += 1) {
+    if (ACTIVITY_LINE_PATTERN.test(lines[index])) matchedIndexes.push(index)
+  }
+  if (matchedIndexes.length < 2) return null
+  if (matchedIndexes.length < Math.ceil(lines.length * 0.5)) return null
+
+  const summaryIndex = matchedIndexes[0]
+  const detailLines = lines.filter((_, index) => index !== summaryIndex)
+  return { summary: lines[summaryIndex], detailLines }
+}
+
 function formatRawEntries(entries: LogRawEntry[]): string {
   return entries
     .map((entry, index) => `${index > 0 ? '\n\n-----\n' : ''}#${entry.seq}\n${entry.raw}`)
@@ -406,6 +450,7 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
   const [groupFilters, setGroupFilters] = useState<Record<TaskEventDisplayGroup, boolean>>(DEFAULT_GROUP_FILTERS)
   const [followLogs, setFollowLogs] = useState(true)
   const [expandedRawBlocks, setExpandedRawBlocks] = useState<Set<string>>(new Set())
+  const [expandedActivityBlocks, setExpandedActivityBlocks] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [planSheetOpen, setPlanSheetOpen] = useState(false)
@@ -419,6 +464,7 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
     setGroupFilters(DEFAULT_GROUP_FILTERS)
     setFollowLogs(true)
     setExpandedRawBlocks(new Set())
+    setExpandedActivityBlocks(new Set())
     setLoading(true)
     setError('')
     setPlanSheetOpen(false)
@@ -549,6 +595,18 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
       }
       return changed ? next : prev
     })
+    setExpandedActivityBlocks((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const key of prev) {
+        if (!allowedKeys.has(key)) {
+          changed = true
+          continue
+        }
+        next.add(key)
+      }
+      return changed ? next : prev
+    })
   }, [logBlocks])
 
   useEffect(() => {
@@ -589,6 +647,15 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
     })
   }
 
+  function toggleActivityBlock(blockKey: string) {
+    setExpandedActivityBlocks((prev) => {
+      const next = new Set(prev)
+      if (next.has(blockKey)) next.delete(blockKey)
+      else next.add(blockKey)
+      return next
+    })
+  }
+
   async function confirmPlan() {
     if (!currentTask) return
     await api.confirmPlan(currentTask.id, answers)
@@ -622,10 +689,93 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
 
   function renderPlanPanel(panelClassName: string) {
     if (!canPlanReview) return null
+    const plan = currentTask?.plan_result
+    const hasEnhancedDetails = plan && (
+      plan.steps?.length > 0 ||
+      plan.risks?.length > 0 ||
+      plan.affected_files?.length > 0 ||
+      plan.new_dependencies?.length > 0 ||
+      plan.estimated_time ||
+      plan.validation ||
+      plan.rollback
+    )
+
     return (
       <div className={`plan-panel ${panelClassName}`}>
         <h4>Plan 审批</h4>
-        <p>{currentTask?.plan_result?.summary || '无摘要'}</p>
+        <p>{plan?.summary || '无摘要'}</p>
+
+        {/* Enhanced Plan Details */}
+        {hasEnhancedDetails && (
+          <div className="plan-details-section">
+            {plan?.steps && plan.steps.length > 0 && (
+              <div className="plan-detail-block">
+                <strong>实施步骤:</strong>
+                <ol className="plan-steps-list">
+                  {plan.steps.map((step, i) => (
+                    <li key={i}>{step}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {plan?.risks && plan.risks.length > 0 && (
+              <div className="plan-detail-block">
+                <strong>风险评估:</strong>
+                <ul className="plan-risks-list">
+                  {plan.risks.map((risk, i) => (
+                    <li key={i} className="plan-risk-item">{risk}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {plan?.affected_files && plan.affected_files.length > 0 && (
+              <div className="plan-detail-block">
+                <strong>涉及文件:</strong>
+                <div className="plan-files-list">
+                  {plan.affected_files.map((file, i) => (
+                    <code key={i} className="plan-file-item">{file}</code>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {plan?.new_dependencies && plan.new_dependencies.length > 0 && (
+              <div className="plan-detail-block">
+                <strong>新增依赖:</strong>
+                <div className="plan-deps-list">
+                  {plan.new_dependencies.map((dep, i) => (
+                    <span key={i} className="plan-dep-item">{dep}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {plan?.estimated_time && (
+              <div className="plan-detail-block">
+                <strong>预计执行时间:</strong>
+                <span className="plan-meta-value">{plan.estimated_time}</span>
+              </div>
+            )}
+
+            {plan?.validation && (
+              <div className="plan-detail-block">
+                <strong>验证方法:</strong>
+                <p className="plan-meta-text">{plan.validation}</p>
+              </div>
+            )}
+
+            {plan?.rollback && (
+              <div className="plan-detail-block">
+                <strong>回滚方式:</strong>
+                <p className="plan-meta-text">{plan.rollback}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Decision Questions */}
         {questionList.map((q) => (
           <div className="plan-question" key={q.id}>
             <div className="plan-question-title">{q.title}</div>
@@ -661,6 +811,9 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
           <button className="button" onClick={revisePlan} disabled={!feedback.trim()}>
             修改反馈
           </button>
+          <button className="button button-danger" onClick={cancelTask}>
+            放弃 Plan
+          </button>
         </div>
       </div>
     )
@@ -684,26 +837,34 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
     <div className="page">
       <section className={`task-detail-page ${canPlanReview ? 'task-detail-page-plan-review' : ''}`}>
         <header className="task-detail-header">
-          <button className="button" onClick={onBack}>返回上一页</button>
-          <button className="button" onClick={onBackFallback}>返回任务看板</button>
-          <h3>{currentTask.title}</h3>
+          <div className="task-detail-title-wrap">
+            <h3>{currentTask.title}</h3>
+          </div>
+          <div className="task-detail-nav-actions">
+            <button className="button" onClick={onBack}>返回上一页</button>
+            <button className="button" onClick={onBackFallback}>返回任务看板</button>
+          </div>
         </header>
 
-        <div className="task-detail-row">
-          <strong>任务 ID:</strong> {currentTask.id}
-        </div>
-        <div className="task-detail-row">
-          <strong>状态:</strong> {currentTask.status}
-        </div>
-        <div className="task-detail-row">
-          <strong>PR:</strong>{' '}
-          {currentTask.pr_url ? (
-            <a href={currentTask.pr_url} target="_blank" rel="noreferrer">
-              {currentTask.pr_url}
-            </a>
-          ) : (
-            '-'
-          )}
+        <div className="task-detail-meta-grid">
+          <div className="task-detail-row">
+            <strong>任务 ID</strong>
+            <span>{currentTask.id}</span>
+          </div>
+          <div className="task-detail-row">
+            <strong>状态</strong>
+            <span className="task-status-pill">{currentTask.status}</span>
+          </div>
+          <div className="task-detail-row">
+            <strong>PR</strong>
+            {currentTask.pr_url ? (
+              <a href={currentTask.pr_url} target="_blank" rel="noreferrer">
+                {currentTask.pr_url}
+              </a>
+            ) : (
+              <span>-</span>
+            )}
+          </div>
         </div>
         {!!currentTask.error_message && (
           <div className="task-detail-error">
@@ -720,7 +881,7 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
           </div>
         )}
 
-        <div className="task-detail-actions">
+        <div className="task-detail-actions task-detail-actions-main">
           {canMarkDone && (
             <button className="button button-primary" onClick={markDone}>
               标记完成
@@ -734,7 +895,7 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
           </button>
         </div>
 
-        <h4>日志流</h4>
+        <h4 className="chat-section-title">日志流</h4>
         <div className="log-toolbar log-toolbar-sticky">
           <div className="log-filters">
             {GROUP_FILTER_OPTIONS.map((option) => (
@@ -761,26 +922,77 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
               <div className="chat-stream">
                 {chatBlocks.map((block) => {
                   const seqRange =
-                    block.seqStart === block.seqEnd ? `#${block.seqStart}` : `#${block.seqStart}-${block.seqEnd}`
+                    block.seqStart === block.seqEnd ? `${block.seqStart}` : `${block.seqStart}-${block.seqEnd}`
                   const expanded = expandedRawBlocks.has(block.key)
+                  const markdownEnabled = shouldRenderMarkdown(block.group)
+                  const activityDigest = markdownEnabled ? null : toActivityDigest(block.message)
+                  const activityExpanded = expandedActivityBlocks.has(block.key)
+                  const bubbleTextClass = toBubbleTextClass(block.group)
                   return (
                     <div className={`chat-row chat-row-${block.role}`} key={block.key}>
-                      <div className={`chat-bubble chat-bubble-${block.role}`}>
+                      <div className={`chat-bubble chat-bubble-${block.role} chat-bubble-group-${block.group}`}>
                         <div className="chat-bubble-head">
                           <span className="chat-time">{block.time}</span>
                           <span className="chat-tag">{block.label}</span>
                           <span className="chat-seq">{seqRange}</span>
                           {block.count > 1 && <span className="chat-merge-label">合并{block.count}条</span>}
+                          <button
+                            type="button"
+                            className={`chat-raw-toggle ${expanded ? 'chat-raw-toggle-expanded' : ''}`}
+                            onClick={() => toggleRawBlock(block.key)}
+                            title={expanded ? '收起原始' : '查看原始'}
+                            aria-label={expanded ? '收起原始' : '查看原始'}
+                          >
+                            {'>'}
+                          </button>
                         </div>
                         {block.isRangedSeq && (
                           <div className="chat-seq-hint">
                             序号跨度表示中间有其他事件（可能被筛选或合并），不代表中断。
                           </div>
                         )}
-                        <pre className="chat-bubble-text">{block.message}</pre>
-                        <button type="button" className="log-raw-toggle" onClick={() => toggleRawBlock(block.key)}>
-                          {expanded ? '收起原始' : '查看原始'}
-                        </button>
+                        {activityDigest ? (
+                          <div className="chat-activity">
+                            <div className="chat-activity-head">
+                              <span className="chat-activity-summary">{activityDigest.summary}</span>
+                              {activityDigest.detailLines.length > 0 && (
+                                <button
+                                  type="button"
+                                  className="chat-activity-more"
+                                  onClick={() => toggleActivityBlock(block.key)}
+                                >
+                                  {activityExpanded ? '收起' : '更多'}
+                                </button>
+                              )}
+                            </div>
+                            {activityExpanded && activityDigest.detailLines.length > 0 && (
+                              <div className="chat-activity-lines">
+                                {activityDigest.detailLines.map((line, lineIndex) => (
+                                  <div className="chat-activity-line" key={`${block.key}-activity-${lineIndex}`}>
+                                    {line}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ) : markdownEnabled ? (
+                          <div className="chat-bubble-markdown">
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                a: ({ href, children, ...props }) => (
+                                  <a href={href} target="_blank" rel="noreferrer noopener" {...props}>
+                                    {children}
+                                  </a>
+                                ),
+                              }}
+                            >
+                              {block.message}
+                            </ReactMarkdown>
+                          </div>
+                        ) : (
+                          <pre className={bubbleTextClass}>{block.message}</pre>
+                        )}
                         {expanded && <pre className="log-raw">{formatRawEntries(block.rawEntries)}</pre>}
                       </div>
                     </div>

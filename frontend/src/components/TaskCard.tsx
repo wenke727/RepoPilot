@@ -21,6 +21,23 @@ function formatRelativeTime(ts: string) {
   return `${Math.floor(diff / day)} 天前`
 }
 
+function getRiskLevel(task: Task): 'high' | 'medium' | 'low' | null {
+  if (!task.plan_result?.risks || task.plan_result.risks.length === 0) return null
+  const risks = task.plan_result.risks
+  // Simple heuristic based on risk count and keywords
+  if (risks.length >= 3) return 'high'
+  if (risks.length >= 2) return 'medium'
+  return 'low'
+}
+
+function getRiskLabel(level: 'high' | 'medium' | 'low'): string {
+  switch (level) {
+    case 'high': return '高风险'
+    case 'medium': return '中风险'
+    case 'low': return '低风险'
+  }
+}
+
 export default function TaskCard({
   task,
   columnKey,
@@ -32,6 +49,12 @@ export default function TaskCard({
   const cardClassName = `task-card task-card-${columnKey.toLowerCase()}`
   const idText = task.id
   const timePrefix = task.status === 'FAILED' ? '失败' : task.status === 'DONE' ? '完成' : '更新'
+  const riskLevel = getRiskLevel(task)
+
+  // For Plan tasks with result, show summary instead of raw prompt
+  const displaySummary = task.mode === 'PLAN' && task.plan_result?.summary
+    ? task.plan_result.summary
+    : task.prompt.slice(0, 120)
 
   return (
     <article className={cardClassName} onClick={() => onOpen(task)}>
@@ -52,8 +75,9 @@ export default function TaskCard({
         <span className="task-chevron">v</span>
       </div>
       {task.mode === 'PLAN' && <span className="status-tag status-plan">◎ Plan</span>}
+      {riskLevel && <span className={`status-tag status-risk-${riskLevel}`}>⚠ {getRiskLabel(riskLevel)}</span>}
       <h4>{task.title}</h4>
-      <p>{task.prompt.slice(0, 120)}</p>
+      <p>{displaySummary}</p>
       <div className="task-meta">
         <span>{timePrefix}: {formatRelativeTime(task.updated_at)}</span>
       </div>

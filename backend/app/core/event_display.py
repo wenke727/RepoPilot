@@ -14,9 +14,6 @@ _DISPLAY_LABELS: dict[DisplayGroup, str] = {
     "protocol": "协议",
 }
 
-_PREVIEW_LIMIT = 600
-
-
 def enrich_event_for_display(event: dict[str, Any]) -> dict[str, Any]:
     view = dict(event)
     view["display"] = build_event_display(event)
@@ -199,9 +196,7 @@ def _event_raw_without_seq(event: dict[str, Any]) -> str:
 
 
 def _truncate_preview(text: str) -> str:
-    if len(text) <= _PREVIEW_LIMIT:
-        return text
-    return text[:_PREVIEW_LIMIT] + "…"
+    return text
 
 
 def _as_str(value: Any) -> str:

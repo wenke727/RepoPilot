@@ -42,6 +42,14 @@ export interface PlanResult {
   recommended_prompt: string
   raw_text: string
   valid_json: boolean
+  // Enhanced plan details
+  steps: string[]
+  risks: string[]
+  validation: string
+  rollback: string
+  affected_files: string[]
+  new_dependencies: string[]
+  estimated_time: string
 }
 
 export interface Task {

@@ -39,8 +39,6 @@ interface LogBlock {
 
 const LOG_EVENT_LIMIT = 2000
 const LOG_BLOCK_LIMIT = 300
-const PREVIEW_LIMIT = 600
-const MERGED_PREVIEW_LIMIT = 4000
 const FOLLOW_BOTTOM_THRESHOLD = 24
 
 const GROUP_LABELS: Record<TaskEventDisplayGroup, string> = {
@@ -97,8 +95,7 @@ function asDisplayGroup(value: string): TaskEventDisplayGroup {
 }
 
 function truncatePreview(text: string): string {
-  if (text.length <= PREVIEW_LIMIT) return text
-  return `${text.slice(0, PREVIEW_LIMIT)}…`
+  return text
 }
 
 function toRawEventJson(event: TaskEvent): string {
@@ -345,17 +342,21 @@ function toLogEntry(event: TaskEvent, index: number): LogEntry {
 
 function appendMergedMessage(prev: string, next: string): string {
   if (!next) return prev
-  if (!prev) return next.length <= MERGED_PREVIEW_LIMIT ? next : `${next.slice(0, MERGED_PREVIEW_LIMIT)}…`
-  const merged = `${prev}\n${next}`
-  if (merged.length <= MERGED_PREVIEW_LIMIT) return merged
-  return `${merged.slice(0, MERGED_PREVIEW_LIMIT)}…`
+  if (!prev) return next
+  return `${prev}\n${next}`
+}
+
+function shouldMergeEntry(prev: LogBlock | undefined, entry: LogEntry): boolean {
+  if (!prev) return false
+  if (entry.group === 'output' || entry.group === 'result') return false
+  return prev.mergeKey === entry.mergeKey
 }
 
 function mergeLogEntries(entries: LogEntry[]): LogBlock[] {
   const blocks: LogBlock[] = []
   for (const entry of entries) {
     const prev = blocks[blocks.length - 1]
-    if (prev && prev.mergeKey === entry.mergeKey) {
+    if (shouldMergeEntry(prev, entry)) {
       prev.count += 1
       prev.seqEnd = entry.seq
       prev.time = entry.time

@@ -24,7 +24,7 @@ function deriveTitleFromPrompt(prompt: string) {
 
 export default function TaskComposer({ selectedRepoId, onCreate }: Props) {
   const [prompt, setPrompt] = useState('')
-  const [mode, setMode] = useState<TaskMode>('EXEC')
+  const [mode, setMode] = useState<TaskMode>('PLAN')
   const permissionMode: PermissionMode = 'BYPASS'
   const priority = 0
   const [submitting, setSubmitting] = useState(false)
@@ -45,7 +45,7 @@ export default function TaskComposer({ selectedRepoId, onCreate }: Props) {
         priority,
       })
       setPrompt('')
-      setMode('EXEC')
+      setMode('PLAN')
     } finally {
       setSubmitting(false)
     }
@@ -89,7 +89,7 @@ export default function TaskComposer({ selectedRepoId, onCreate }: Props) {
           <input type="checkbox" checked={mode === 'PLAN'} onChange={(e) => setMode(e.target.checked ? 'PLAN' : 'EXEC')} />
           <span>Plan 模式</span>
         </label>
-        <span className="muted composer-hint">Enter 换行，Cmd/Ctrl+Enter 提交 | 点击麦克风语音输入</span>
+        <span className="muted composer-hint">Plan 先行，确认后执行 | Cmd/Ctrl+Enter 提交</span>
       </div>
     </section>
   )

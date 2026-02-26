@@ -63,6 +63,14 @@ class PlanResult(BaseModel):
     recommended_prompt: str = ""
     raw_text: str = ""
     valid_json: bool = False
+    # New fields for enhanced plan details
+    steps: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    validation: str = ""
+    rollback: str = ""
+    affected_files: list[str] = Field(default_factory=list)
+    new_dependencies: list[str] = Field(default_factory=list)
+    estimated_time: str = ""
 
 
 class Task(BaseModel):
@@ -114,7 +122,7 @@ class TaskCreateInput(BaseModel):
     repo_id: str
     title: str
     prompt: str
-    mode: TaskMode = TaskMode.EXEC
+    mode: TaskMode = TaskMode.PLAN
     permission_mode: PermissionMode = PermissionMode.BYPASS
     priority: int = 0
 
