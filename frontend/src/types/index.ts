@@ -64,6 +64,7 @@ export interface Task {
   created_at: string
   updated_at: string
   current_run_id?: string
+  claude_session_id?: string
   plan_result?: PlanResult
   plan_answers: Record<string, string>
   pr_url: string

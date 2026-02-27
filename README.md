@@ -32,10 +32,13 @@
 - PLAN 批量审核接口：
   - `POST /api/tasks/plan/batch/confirm`
   - `POST /api/tasks/plan/batch/revise`
-- EXEC 流水线：`worktree -> claude -> commit -> rebase -> test -> push -> PR`
+- Claude 驱动主链路：`TODO -> PLAN_RUNNING -> PLAN_REVIEW -> READY -> RUNNING -> REVIEW -> DONE`
+- EXEC Git 流水线：`worktree -> claude -> commit -> rebase -> test -> push -> PR`
 - PR 优先用 `gh` 创建，失败时回退 GitHub API（需 `GITHUB_TOKEN`）
 - 事件流与通知中心
 - 失败/取消任务的产物快照（便于排障）
+
+详细流程文档：[`docs/agentic_coding_flow_draft.md`](docs/agentic_coding_flow_draft.md)
 
 ## ID 规则
 

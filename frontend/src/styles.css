@@ -723,10 +723,10 @@ select {
 
 .plan-panel {
   margin-top: 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px;
-  background: #f7fbff;
+  border: 1px solid #d6e3fb;
+  border-radius: 14px;
+  padding: 12px;
+  background: #f4f8ff;
 }
 
 .plan-details-section {
@@ -797,6 +797,130 @@ select {
 .plan-panel > p {
   margin: 6px 0 0;
   color: #4e6078;
+}
+
+.plan-choice-card {
+  margin-top: 10px;
+  border: 1px solid #d6e3fb;
+  border-radius: 14px;
+  background: #edf3ff;
+  padding: 12px;
+}
+
+.plan-choice-title {
+  color: #4a74ad;
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.plan-choice-question {
+  margin-top: 8px;
+}
+
+.plan-choice-question-title {
+  color: #293f62;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.plan-choice-question-text {
+  margin-top: 4px;
+  color: #4d5f78;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.plan-choice-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.plan-choice-pill {
+  border: 1px solid #d8e0eb;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #596a82;
+  padding: 7px 12px;
+  font-size: 14px;
+  line-height: 1.35;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.plan-choice-pill:hover {
+  border-color: #b7c9e6;
+  background: #f0f5ff;
+}
+
+.plan-choice-pill-active {
+  border-color: #7ea8e8;
+  background: #dce9ff;
+  color: #2f5f9d;
+}
+
+.plan-choice-pill-readonly,
+.plan-choice-pill-readonly:hover {
+  cursor: default;
+  border-color: #b7ccf0;
+  background: #e4edff;
+  color: #3d6ea9;
+}
+
+.plan-choice-pill-readonly.plan-choice-pill-active,
+.plan-choice-pill-readonly.plan-choice-pill-active:hover {
+  border-color: #6798e3;
+  background: #d3e4ff;
+  color: #1f4f94;
+  box-shadow: inset 0 0 0 1px rgba(60, 120, 209, 0.25);
+}
+
+.plan-choice-pill-label {
+  font-weight: 700;
+}
+
+.plan-choice-pill-desc {
+  color: #6d7f9c;
+  font-weight: 500;
+}
+
+.plan-choice-card-readonly .plan-choice-question-title {
+  font-size: 14px;
+}
+
+.plan-choice-hint {
+  margin-top: 10px;
+  color: #50719f;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.plan-choice-empty {
+  color: #6f8097;
+  font-size: 13px;
+}
+
+.plan-choice-card-log {
+  margin-top: 8px;
+}
+
+.plan-log-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-log-card .plan-details-section {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.plan-log-card .plan-detail-block:last-child {
+  margin-bottom: 0;
 }
 
 .plan-question {

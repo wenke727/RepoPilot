@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,15 @@ from app.store.json_store import JsonStore
 
 
 class TaskRunner:
+    _RESUME_FALLBACK_ERROR_PATTERNS = (
+        re.compile(r"session id .*not found", re.IGNORECASE),
+        re.compile(r"failed to resume", re.IGNORECASE),
+        re.compile(r"unable to resume", re.IGNORECASE),
+        re.compile(r"cannot resume", re.IGNORECASE),
+        re.compile(r"invalid session", re.IGNORECASE),
+        re.compile(r"session .*does not exist", re.IGNORECASE),
+    )
+
     def __init__(self, store: JsonStore, settings: Settings) -> None:
         self.logger = logging.getLogger("app.runner")
         self.store = store
@@ -47,13 +58,32 @@ class TaskRunner:
             return False
         return bool(task.cancel_requested)
 
-    def _stream_claude(
+    def _ensure_task_session_id(self, task: Task) -> tuple[str, bool]:
+        if task.claude_session_id:
+            return task.claude_session_id, False
+
+        latest = self.store.get_task(task.id)
+        if latest and latest.claude_session_id:
+            task.claude_session_id = latest.claude_session_id
+            return latest.claude_session_id, False
+
+        new_session_id = str(uuid.uuid4())
+        patched = self.store.update_task(task.id, {"claude_session_id": new_session_id})
+        if patched and patched.claude_session_id:
+            task.claude_session_id = patched.claude_session_id
+            return patched.claude_session_id, True
+
+        task.claude_session_id = new_session_id
+        return new_session_id, True
+
+    def _build_claude_cmd(
         self,
         task: Task,
         prompt: str,
-        workdir: Path,
-        timeout_seconds: int = 2700,
-    ) -> tuple[int, str, bool]:
+        *,
+        session_id: str,
+        use_resume: bool,
+    ) -> list[str]:
         cmd = [
             "claude",
             "-p",
@@ -62,11 +92,29 @@ class TaskRunner:
             "stream-json",
             "--verbose",
         ]
+        if use_resume:
+            cmd.extend(["--resume", session_id])
+        else:
+            cmd.extend(["--session-id", session_id])
+
         if task.permission_mode == PermissionMode.BYPASS:
             cmd.extend(["--permission-mode", "bypassPermissions"])
         else:
             cmd.extend(["--permission-mode", "default"])
+        return cmd
 
+    def _is_resume_recoverable_error(self, text: str) -> bool:
+        if not text.strip():
+            return False
+        return any(pattern.search(text) for pattern in self._RESUME_FALLBACK_ERROR_PATTERNS)
+
+    def _run_claude_cmd(
+        self,
+        task: Task,
+        cmd: list[str],
+        workdir: Path,
+        timeout_seconds: int,
+    ) -> tuple[int, str, bool]:
         self.store.append_event(task.id, {"type": "command", "cmd": " ".join(cmd)})
         proc = subprocess.Popen(
             cmd,
@@ -115,6 +163,74 @@ class TaskRunner:
             cancelled = True
 
         return proc.returncode or 0, "\n".join(collected_text).strip(), cancelled
+
+    def _stream_claude(
+        self,
+        task: Task,
+        prompt: str,
+        workdir: Path,
+        timeout_seconds: int = 2700,
+    ) -> tuple[int, str, bool]:
+        session_id, created = self._ensure_task_session_id(task)
+        use_resume = not created
+        if created:
+            self.store.append_event(
+                task.id,
+                {
+                    "type": "session_created",
+                    "session_id": session_id,
+                    "message": f"Created Claude session {session_id}",
+                },
+            )
+        else:
+            self.store.append_event(
+                task.id,
+                {
+                    "type": "session_resumed",
+                    "session_id": session_id,
+                    "message": f"Resuming Claude session {session_id}",
+                },
+            )
+
+        cmd = self._build_claude_cmd(task, prompt, session_id=session_id, use_resume=use_resume)
+        exit_code, text, cancelled = self._run_claude_cmd(task, cmd, workdir, timeout_seconds)
+
+        should_fallback = (
+            use_resume
+            and not cancelled
+            and exit_code != 0
+            and self._is_resume_recoverable_error(text)
+        )
+        if not should_fallback:
+            return exit_code, text, cancelled
+
+        self.store.append_event(
+            task.id,
+            {
+                "type": "session_resume_failed",
+                "session_id": session_id,
+                "message": f"Resume failed for session {session_id}; fallback to a new session",
+                "error_text": text[:1000],
+            },
+        )
+
+        new_session_id = str(uuid.uuid4())
+        patched = self.store.update_task(task.id, {"claude_session_id": new_session_id})
+        if patched and patched.claude_session_id:
+            new_session_id = patched.claude_session_id
+        task.claude_session_id = new_session_id
+        self.store.append_event(
+            task.id,
+            {
+                "type": "session_fallback_created",
+                "old_session_id": session_id,
+                "session_id": new_session_id,
+                "message": f"Created fallback Claude session {new_session_id}",
+            },
+        )
+
+        fallback_cmd = self._build_claude_cmd(task, prompt, session_id=new_session_id, use_resume=False)
+        return self._run_claude_cmd(task, fallback_cmd, workdir, timeout_seconds)
 
     def _extract_text_from_stream_line(self, line: str) -> str:
         try:

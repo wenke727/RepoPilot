@@ -2,7 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api/client'
+import PlanChoiceCard from '../components/PlanChoiceCard'
+import {
+  deriveInitialAnswers,
+  detectPlanQuestionNoise,
+  isPlanAnswersComplete,
+  normalizePlanResult,
+  parsePlanCardPayload,
+  toPlanCardPayload,
+} from '../plan/selection'
 import type { Task, TaskEvent, TaskEventDisplay, TaskEventDisplayGroup } from '../types'
+import type { NormalizedPlanResult } from '../plan/selection'
 
 interface Props {
   taskId: string
@@ -43,7 +53,6 @@ type ChatRole = 'user' | 'assistant' | 'system'
 
 interface ChatBlock extends LogBlock {
   role: ChatRole
-  isRangedSeq: boolean
 }
 
 interface ActivityDigest {
@@ -358,6 +367,149 @@ function toLogEntry(event: TaskEvent, index: number): LogEntry {
   }
 }
 
+function isPlanQuestionNoiseEntry(entry: LogEntry): boolean {
+  if (entry.group !== 'output' && entry.group !== 'result') return false
+  return detectPlanQuestionNoise(entry.message)
+}
+
+function findExecBoundarySeq(events: TaskEvent[]): string | null {
+  for (const event of events) {
+    if (pickString(event, 'type') !== 'command') continue
+    const cmd = pickString(event, 'cmd')
+    if (!cmd.includes('以下是已确认的执行上下文')) continue
+    const seqRaw = event.seq
+    if (typeof seqRaw === 'number' || typeof seqRaw === 'string') return String(seqRaw)
+  }
+  return null
+}
+
+function buildPlanCardEntry(task: Task, boundarySeq: string | null, boundaryTime: string): LogEntry | null {
+  const payload = toPlanCardPayload(task)
+  if (!payload) return null
+  const seq = boundarySeq ? `${boundarySeq}~` : 'plan-card'
+  return {
+    key: `plan-card-${task.id}-${boundarySeq || 'top'}`,
+    group: 'result',
+    label: 'Plan',
+    time: boundaryTime || formatEventTime(task.updated_at),
+    seq,
+    message: 'Plan 卡片',
+    raw: JSON.stringify(payload, null, 2),
+    mergeKey: 'result:plan_card',
+  }
+}
+
+function buildDisplayLogEntries(events: TaskEvent[], task: Task | null): LogEntry[] {
+  const rawEntries = events.map((event, index) => toLogEntry(event, index))
+  const prunedEntries = rawEntries.filter((entry) => !isPlanQuestionNoiseEntry(entry))
+  if (!task) return prunedEntries
+
+  const boundarySeq = findExecBoundarySeq(events)
+  const boundaryIndex = boundarySeq
+    ? prunedEntries.findIndex((entry) => entry.group === 'command' && entry.seq === boundarySeq)
+    : -1
+  const boundaryTime = boundaryIndex >= 0 ? prunedEntries[boundaryIndex].time : formatEventTime(task.updated_at)
+  const planCardEntry = buildPlanCardEntry(task, boundarySeq, boundaryTime)
+  if (!planCardEntry) return prunedEntries
+
+  if (boundaryIndex < 0) return [planCardEntry, ...prunedEntries]
+  return [
+    ...prunedEntries.slice(0, boundaryIndex),
+    planCardEntry,
+    ...prunedEntries.slice(boundaryIndex),
+  ]
+}
+
+function renderPlanDetailBlocks(plan: NormalizedPlanResult): JSX.Element | null {
+  const hasContent = Boolean(
+    plan.summary ||
+      plan.estimatedTime ||
+      plan.validation ||
+      plan.rollback ||
+      plan.recommendedPrompt ||
+      plan.steps.length > 0 ||
+      plan.risks.length > 0 ||
+      plan.affectedFiles.length > 0 ||
+      plan.newDependencies.length > 0,
+  )
+  if (!hasContent) return null
+
+  return (
+    <div className="plan-details-section">
+      {plan.summary && (
+        <div className="plan-detail-block">
+          <strong>摘要:</strong>
+          <p className="plan-meta-text">{plan.summary}</p>
+        </div>
+      )}
+      {plan.steps.length > 0 && (
+        <div className="plan-detail-block">
+          <strong>实施步骤:</strong>
+          <ol className="plan-steps-list">
+            {plan.steps.map((step, i) => (
+              <li key={`step-${i}`}>{step}</li>
+            ))}
+          </ol>
+        </div>
+      )}
+      {plan.risks.length > 0 && (
+        <div className="plan-detail-block">
+          <strong>风险评估:</strong>
+          <ul className="plan-risks-list">
+            {plan.risks.map((risk, i) => (
+              <li key={`risk-${i}`} className="plan-risk-item">{risk}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {plan.affectedFiles.length > 0 && (
+        <div className="plan-detail-block">
+          <strong>涉及文件:</strong>
+          <div className="plan-files-list">
+            {plan.affectedFiles.map((file, i) => (
+              <code key={`file-${i}`} className="plan-file-item">{file}</code>
+            ))}
+          </div>
+        </div>
+      )}
+      {plan.newDependencies.length > 0 && (
+        <div className="plan-detail-block">
+          <strong>新增依赖:</strong>
+          <div className="plan-deps-list">
+            {plan.newDependencies.map((dep, i) => (
+              <span key={`dep-${i}`} className="plan-dep-item">{dep}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {plan.estimatedTime && (
+        <div className="plan-detail-block">
+          <strong>预计执行时间:</strong>
+          <span className="plan-meta-value">{plan.estimatedTime}</span>
+        </div>
+      )}
+      {plan.validation && (
+        <div className="plan-detail-block">
+          <strong>验证方法:</strong>
+          <p className="plan-meta-text">{plan.validation}</p>
+        </div>
+      )}
+      {plan.rollback && (
+        <div className="plan-detail-block">
+          <strong>回滚方式:</strong>
+          <p className="plan-meta-text">{plan.rollback}</p>
+        </div>
+      )}
+      {plan.recommendedPrompt && (
+        <div className="plan-detail-block">
+          <strong>建议执行 Prompt:</strong>
+          <pre className="chat-bubble-text">{plan.recommendedPrompt}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function appendMergedMessage(prev: string, next: string): string {
   if (!next) return prev
   if (!prev) return next
@@ -514,12 +666,10 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
   const canPlanReview = currentTask?.status === 'PLAN_REVIEW' && !!currentTask.plan_result
   const canMarkDone = currentTask?.status === 'REVIEW'
 
-  const questionList = useMemo(() => currentTask?.plan_result?.questions ?? [], [currentTask])
-  const allQuestionsAnswered = useMemo(() => {
-    if (questionList.length === 0) return true
-    return questionList.every((q) => q.options.some((opt) => opt.key === answers[q.id]))
-  }, [answers, questionList])
-  const logEntries = useMemo(() => events.map((event, index) => toLogEntry(event, index)), [events])
+  const normalizedPlan = useMemo(() => normalizePlanResult(currentTask?.plan_result), [currentTask?.plan_result])
+  const questionList = useMemo(() => normalizedPlan.questions, [normalizedPlan])
+  const allQuestionsAnswered = useMemo(() => isPlanAnswersComplete(questionList, answers), [answers, questionList])
+  const logEntries = useMemo(() => buildDisplayLogEntries(events, currentTask), [currentTask, events])
   const groupCounts = useMemo(() => {
     const counts: Record<TaskEventDisplayGroup, number> = {
       command: 0,
@@ -542,38 +692,20 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
       logBlocks.map((block) => ({
         ...block,
         role: toChatRole(block.group),
-        isRangedSeq: block.seqStart !== block.seqEnd,
       })),
     [logBlocks],
   )
 
   useEffect(() => {
     setAnswers((prev) => {
-      const next: Record<string, string> = {}
-      let changed = false
-      for (const q of questionList) {
-        const selected = prev[q.id]
-        const selectedValid = q.options.some((opt) => opt.key === selected)
-        if (selectedValid) {
-          next[q.id] = selected
-          continue
-        }
-        const recommended = q.recommended_option_key
-        const recommendedValid = q.options.some((opt) => opt.key === recommended)
-        if (recommendedValid && recommended) {
-          next[q.id] = recommended
-          changed = true
-          continue
-        }
-        if (selected) changed = true
-      }
+      const next = deriveInitialAnswers(questionList, prev)
       const prevKeys = Object.keys(prev)
       const nextKeys = Object.keys(next)
       if (prevKeys.length !== nextKeys.length) return next
       for (const key of nextKeys) {
         if (prev[key] !== next[key]) return next
       }
-      return changed ? next : prev
+      return prev
     })
   }, [questionList])
 
@@ -689,113 +821,21 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
 
   function renderPlanPanel(panelClassName: string) {
     if (!canPlanReview) return null
-    const plan = currentTask?.plan_result
-    const hasEnhancedDetails = plan && (
-      plan.steps?.length > 0 ||
-      plan.risks?.length > 0 ||
-      plan.affected_files?.length > 0 ||
-      plan.new_dependencies?.length > 0 ||
-      plan.estimated_time ||
-      plan.validation ||
-      plan.rollback
-    )
+    const plan = normalizedPlan
+    const detailBlocks = renderPlanDetailBlocks(plan)
 
     return (
       <div className={`plan-panel ${panelClassName}`}>
         <h4>Plan 审批</h4>
-        <p>{plan?.summary || '无摘要'}</p>
-
-        {/* Enhanced Plan Details */}
-        {hasEnhancedDetails && (
-          <div className="plan-details-section">
-            {plan?.steps && plan.steps.length > 0 && (
-              <div className="plan-detail-block">
-                <strong>实施步骤:</strong>
-                <ol className="plan-steps-list">
-                  {plan.steps.map((step, i) => (
-                    <li key={i}>{step}</li>
-                  ))}
-                </ol>
-              </div>
-            )}
-
-            {plan?.risks && plan.risks.length > 0 && (
-              <div className="plan-detail-block">
-                <strong>风险评估:</strong>
-                <ul className="plan-risks-list">
-                  {plan.risks.map((risk, i) => (
-                    <li key={i} className="plan-risk-item">{risk}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {plan?.affected_files && plan.affected_files.length > 0 && (
-              <div className="plan-detail-block">
-                <strong>涉及文件:</strong>
-                <div className="plan-files-list">
-                  {plan.affected_files.map((file, i) => (
-                    <code key={i} className="plan-file-item">{file}</code>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {plan?.new_dependencies && plan.new_dependencies.length > 0 && (
-              <div className="plan-detail-block">
-                <strong>新增依赖:</strong>
-                <div className="plan-deps-list">
-                  {plan.new_dependencies.map((dep, i) => (
-                    <span key={i} className="plan-dep-item">{dep}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {plan?.estimated_time && (
-              <div className="plan-detail-block">
-                <strong>预计执行时间:</strong>
-                <span className="plan-meta-value">{plan.estimated_time}</span>
-              </div>
-            )}
-
-            {plan?.validation && (
-              <div className="plan-detail-block">
-                <strong>验证方法:</strong>
-                <p className="plan-meta-text">{plan.validation}</p>
-              </div>
-            )}
-
-            {plan?.rollback && (
-              <div className="plan-detail-block">
-                <strong>回滚方式:</strong>
-                <p className="plan-meta-text">{plan.rollback}</p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Decision Questions */}
-        {questionList.map((q) => (
-          <div className="plan-question" key={q.id}>
-            <div className="plan-question-title">{q.title}</div>
-            <div className="muted">{q.question}</div>
-            <div className="plan-options">
-              {q.options.map((opt) => (
-                <button
-                  key={opt.key}
-                  className={`pill ${answers[q.id] === opt.key ? 'pill-active' : ''}`}
-                  onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: opt.key }))}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-        {!allQuestionsAnswered && questionList.length > 0 && (
-          <div className="plan-answer-hint">请先完成所有选项后再确认执行。</div>
-        )}
+        {detailBlocks}
+        <PlanChoiceCard
+          title="Claude 的问题（请回答后再确认）"
+          questions={questionList}
+          answers={answers}
+          onSelect={(questionId, optionKey) => setAnswers((prev) => ({ ...prev, [questionId]: optionKey }))}
+          showConfirmHint
+          className="plan-choice-card-panel"
+        />
         <div className="task-detail-actions">
           <button className="button button-primary" onClick={confirmPlan} disabled={!allQuestionsAnswered}>
             确认并执行
@@ -921,9 +961,11 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
             ) : (
               <div className="chat-stream">
                 {chatBlocks.map((block) => {
-                  const seqRange =
-                    block.seqStart === block.seqEnd ? `${block.seqStart}` : `${block.seqStart}-${block.seqEnd}`
                   const expanded = expandedRawBlocks.has(block.key)
+                  const planCardPayload =
+                    block.mergeKey === 'result:plan_card'
+                      ? parsePlanCardPayload(block.rawEntries[0]?.raw ?? '')
+                      : null
                   const markdownEnabled = shouldRenderMarkdown(block.group)
                   const activityDigest = markdownEnabled ? null : toActivityDigest(block.message)
                   const activityExpanded = expandedActivityBlocks.has(block.key)
@@ -933,8 +975,6 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
                       <div className={`chat-bubble chat-bubble-${block.role} chat-bubble-group-${block.group}`}>
                         <div className="chat-bubble-head">
                           <span className="chat-time">{block.time}</span>
-                          <span className="chat-tag">{block.label}</span>
-                          <span className="chat-seq">{seqRange}</span>
                           {block.count > 1 && <span className="chat-merge-label">合并{block.count}条</span>}
                           <button
                             type="button"
@@ -946,12 +986,17 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
                             {'>'}
                           </button>
                         </div>
-                        {block.isRangedSeq && (
-                          <div className="chat-seq-hint">
-                            序号跨度表示中间有其他事件（可能被筛选或合并），不代表中断。
+                        {planCardPayload ? (
+                          <div className="plan-log-card">
+                            {renderPlanDetailBlocks(planCardPayload.plan)}
+                            <PlanChoiceCard
+                              title="Claude 的问题（已确认项高亮）"
+                              questions={planCardPayload.plan.questions}
+                              answers={planCardPayload.answers}
+                              className="plan-choice-card-log"
+                            />
                           </div>
-                        )}
-                        {activityDigest ? (
+                        ) : activityDigest ? (
                           <div className="chat-activity">
                             <div className="chat-activity-head">
                               <span className="chat-activity-summary">{activityDigest.summary}</span>
@@ -1013,7 +1058,7 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
         <div className="plan-mobile-dock">
           <div className="plan-mobile-dock-text">
             <strong>Plan 审批待处理</strong>
-            <span>{currentTask.plan_result?.summary || '请确认执行选项'}</span>
+            <span>{normalizedPlan.summary || '请确认执行选项'}</span>
           </div>
           <button type="button" className="button button-primary" onClick={() => setPlanSheetOpen(true)}>
             展开 Plan 选项

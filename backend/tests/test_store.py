@@ -101,6 +101,59 @@ def test_board_plan_review_maps_to_review(tmp_path: Path):
     assert counts['REVIEW'] == 1
 
 
+def test_retry_keeps_claude_session_id(tmp_path: Path):
+    store = create_store(tmp_path)
+    repo_root = tmp_path / 'repos' / 'demo'
+    repo_root.mkdir(parents=True)
+    (repo_root / '.git').mkdir()
+
+    with store._lock('repos'):
+        rows = store._read_json(store.repos_file)
+        rows.append(
+            {
+                'id': 'demo',
+                'name': 'demo',
+                'root_path': str(repo_root),
+                'main_branch': 'main',
+                'test_command': 'npm test',
+                'github_repo': 'owner/demo',
+                'shared_symlink_paths': [],
+                'forbidden_symlink_paths': ['PROGRESS.md'],
+                'enabled': True,
+            }
+        )
+        store._write_json_atomic(store.repos_file, rows)
+
+    task = store.create_task(
+        {
+            'repo_id': 'demo',
+            'title': 'retry',
+            'prompt': 'P',
+            'mode': TaskMode.EXEC.value,
+            'permission_mode': 'BYPASS',
+            'priority': 0,
+        }
+    )
+    patched = store.update_task(
+        task.id,
+        {
+            'status': 'FAILED',
+            'claude_session_id': '11111111-1111-1111-1111-111111111111',
+            'current_run_id': '260101-001',
+            'error_code': 'X',
+            'error_message': 'Y',
+        },
+    )
+    assert patched is not None
+
+    retried = store.reset_task_for_retry(task.id)
+    assert retried is not None
+    assert retried.status.value == 'TODO'
+    assert retried.error_code == ''
+    assert retried.error_message == ''
+    assert retried.claude_session_id == '11111111-1111-1111-1111-111111111111'
+
+
 def test_new_ids_use_daily_sequence_format(tmp_path: Path):
     store = create_store(tmp_path)
     repo_root = tmp_path / 'repos' / 'demo'

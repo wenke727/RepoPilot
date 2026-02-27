@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api/client'
+import PlanChoiceCard from './PlanChoiceCard'
+import {
+  deriveInitialAnswers,
+  isPlanAnswersComplete,
+  normalizePlanResult,
+} from '../plan/selection'
 import type { Task, TaskEvent, TaskEventDisplay, TaskEventDisplayGroup } from '../types'
+import type { NormalizedPlanResult } from '../plan/selection'
 
 interface Props {
   task: Task | null
@@ -386,6 +393,96 @@ function formatRawEntries(entries: LogRawEntry[]): string {
     .join('')
 }
 
+function renderPlanDetailBlocks(plan: NormalizedPlanResult): JSX.Element | null {
+  const hasContent = Boolean(
+    plan.summary ||
+      plan.estimatedTime ||
+      plan.validation ||
+      plan.rollback ||
+      plan.recommendedPrompt ||
+      plan.steps.length > 0 ||
+      plan.risks.length > 0 ||
+      plan.affectedFiles.length > 0 ||
+      plan.newDependencies.length > 0,
+  )
+  if (!hasContent) return null
+
+  return (
+    <div className="plan-details-section">
+      {plan.summary && (
+        <div className="plan-detail-block">
+          <strong>摘要:</strong>
+          <p className="plan-meta-text">{plan.summary}</p>
+        </div>
+      )}
+      {plan.steps.length > 0 && (
+        <div className="plan-detail-block">
+          <strong>实施步骤:</strong>
+          <ol className="plan-steps-list">
+            {plan.steps.map((step, i) => (
+              <li key={`step-${i}`}>{step}</li>
+            ))}
+          </ol>
+        </div>
+      )}
+      {plan.risks.length > 0 && (
+        <div className="plan-detail-block">
+          <strong>风险评估:</strong>
+          <ul className="plan-risks-list">
+            {plan.risks.map((risk, i) => (
+              <li key={`risk-${i}`} className="plan-risk-item">{risk}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {plan.affectedFiles.length > 0 && (
+        <div className="plan-detail-block">
+          <strong>涉及文件:</strong>
+          <div className="plan-files-list">
+            {plan.affectedFiles.map((file, i) => (
+              <code key={`file-${i}`} className="plan-file-item">{file}</code>
+            ))}
+          </div>
+        </div>
+      )}
+      {plan.newDependencies.length > 0 && (
+        <div className="plan-detail-block">
+          <strong>新增依赖:</strong>
+          <div className="plan-deps-list">
+            {plan.newDependencies.map((dep, i) => (
+              <span key={`dep-${i}`} className="plan-dep-item">{dep}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {plan.estimatedTime && (
+        <div className="plan-detail-block">
+          <strong>预计执行时间:</strong>
+          <span className="plan-meta-value">{plan.estimatedTime}</span>
+        </div>
+      )}
+      {plan.validation && (
+        <div className="plan-detail-block">
+          <strong>验证方法:</strong>
+          <p className="plan-meta-text">{plan.validation}</p>
+        </div>
+      )}
+      {plan.rollback && (
+        <div className="plan-detail-block">
+          <strong>回滚方式:</strong>
+          <p className="plan-meta-text">{plan.rollback}</p>
+        </div>
+      )}
+      {plan.recommendedPrompt && (
+        <div className="plan-detail-block">
+          <strong>建议执行 Prompt:</strong>
+          <pre className="chat-bubble-text">{plan.recommendedPrompt}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function TaskDrawer({ task, onClose, onChanged }: Props) {
   const [events, setEvents] = useState<TaskEvent[]>([])
   const [currentTask, setCurrentTask] = useState<Task | null>(task)
@@ -447,7 +544,9 @@ export default function TaskDrawer({ task, onClose, onChanged }: Props) {
   const canPlanReview = currentTask?.status === 'PLAN_REVIEW' && !!currentTask.plan_result
   const canMarkDone = currentTask?.status === 'REVIEW'
 
-  const questionList = useMemo(() => currentTask?.plan_result?.questions ?? [], [currentTask])
+  const normalizedPlan = useMemo(() => normalizePlanResult(currentTask?.plan_result), [currentTask?.plan_result])
+  const questionList = useMemo(() => normalizedPlan.questions, [normalizedPlan])
+  const allQuestionsAnswered = useMemo(() => isPlanAnswersComplete(questionList, answers), [answers, questionList])
   const logEntries = useMemo(() => events.map((event, index) => toLogEntry(event, index)), [events])
   const groupCounts = useMemo(() => {
     const counts: Record<TaskEventDisplayGroup, number> = {
@@ -466,6 +565,19 @@ export default function TaskDrawer({ task, onClose, onChanged }: Props) {
     [groupFilters, logEntries],
   )
   const logBlocks = useMemo(() => mergeLogEntries(filteredEntries), [filteredEntries])
+
+  useEffect(() => {
+    setAnswers((prev) => {
+      const next = deriveInitialAnswers(questionList, prev)
+      const prevKeys = Object.keys(prev)
+      const nextKeys = Object.keys(next)
+      if (prevKeys.length !== nextKeys.length) return next
+      for (const key of nextKeys) {
+        if (prev[key] !== next[key]) return next
+      }
+      return prev
+    })
+  }, [questionList])
 
   useEffect(() => {
     const allowedKeys = new Set(logBlocks.map((block) => block.key))
@@ -589,26 +701,17 @@ export default function TaskDrawer({ task, onClose, onChanged }: Props) {
         {canPlanReview && (
           <div className="plan-panel">
             <h4>Plan 审批</h4>
-            <p>{currentTask.plan_result?.summary || '无摘要'}</p>
-            {questionList.map((q) => (
-              <div className="plan-question" key={q.id}>
-                <div className="plan-question-title">{q.title}</div>
-                <div className="muted">{q.question}</div>
-                <div className="plan-options">
-                  {q.options.map((opt) => (
-                    <button
-                      key={opt.key}
-                      className={`pill ${answers[q.id] === opt.key ? 'pill-active' : ''}`}
-                      onClick={() => setAnswers((prev) => ({ ...prev, [q.id]: opt.key }))}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
+            {renderPlanDetailBlocks(normalizedPlan)}
+            <PlanChoiceCard
+              title="Claude 的问题（请回答后再确认）"
+              questions={questionList}
+              answers={answers}
+              onSelect={(questionId, optionKey) => setAnswers((prev) => ({ ...prev, [questionId]: optionKey }))}
+              showConfirmHint
+              className="plan-choice-card-panel"
+            />
             <div className="drawer-actions">
-              <button className="button button-primary" onClick={confirmPlan}>
+              <button className="button button-primary" onClick={confirmPlan} disabled={!allQuestionsAnswered}>
                 确认并执行
               </button>
             </div>
@@ -665,15 +768,11 @@ export default function TaskDrawer({ task, onClose, onChanged }: Props) {
               <div className="log-empty">{events.length === 0 ? '暂无日志' : '当前筛选无日志'}</div>
             ) : (
               logBlocks.map((block) => {
-                const seqRange =
-                  block.seqStart === block.seqEnd ? `#${block.seqStart}` : `#${block.seqStart}-${block.seqEnd}`
                 const expanded = expandedRawBlocks.has(block.key)
                 return (
                   <div className={`log-item log-item-${block.group}`} key={block.key}>
                     <div className="log-item-head">
                       <span className="log-time">{block.time}</span>
-                      <span className="log-badge">{block.label}</span>
-                      <span className="log-seq">{seqRange}</span>
                       {block.count > 1 && <span className="log-merge-count">x{block.count}</span>}
                     </div>
                     <pre className="log-line">{block.message}</pre>

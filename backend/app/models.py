@@ -85,6 +85,7 @@ class Task(BaseModel):
     created_at: str
     updated_at: str
     current_run_id: str | None = None
+    claude_session_id: str | None = None
     plan_result: PlanResult | None = None
     plan_answers: dict[str, str] = Field(default_factory=dict)
     pr_url: str = ""

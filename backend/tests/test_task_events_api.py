@@ -209,3 +209,19 @@ def test_event_display_preview_truncates_to_600_chars(tmp_path: Path):
     assert event["display"]["group"] == "result"
     assert len(event["display"]["text"]) == 601
     assert event["display"]["text"].endswith("…")
+
+
+def test_get_task_includes_claude_session_id(tmp_path: Path):
+    store = _create_store(tmp_path)
+    _inject_demo_repo(store, tmp_path / "repos" / "demo")
+    task_id = _create_task(store)
+    client = _build_client(store)
+
+    patched = store.update_task(task_id, {"claude_session_id": "22222222-2222-2222-2222-222222222222"})
+    assert patched is not None
+
+    resp = client.get(f"/api/tasks/{task_id}")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["id"] == task_id
+    assert payload["claude_session_id"] == "22222222-2222-2222-2222-222222222222"

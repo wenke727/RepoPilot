@@ -122,7 +122,7 @@ git worktree remove
 * 支持多个 Claude Code 实例并行工作
 * **每个实例 = 独立 worktree + 独立端口 + 独立 data/**
 
-```
+```txt
 并行开发工作流
 
 ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
@@ -154,8 +154,8 @@ git worktree remove
 ### Rebase 失败处理流程
 
 1. 如果是 `unstaged changes`
-
    * 先 `git commit` 或 `git stash`
+
 2. 如果有 merge conflicts：
 
    ```bash
@@ -169,6 +169,7 @@ git worktree remove
    git add <resolved-files>
    git rebase --continue
    ```
+
 3. 重复直到 rebase 完成
 
 ---

@@ -194,9 +194,9 @@ export default function BoardPage({ onOpenTask }: { onOpenTask: (taskId: string)
         <div className="toolbar-left">
           <select value={selectedRepoId} className="input" onChange={(e) => setSelectedRepoId(e.target.value)}>
             <option value="">全部仓库</option>
-            {repos.map((repo) => (
+            {repos.filter((repo) => repo.enabled).map((repo) => (
               <option key={repo.id} value={repo.id}>
-                {repo.name} {repo.enabled ? '' : '(已禁用)'}
+                {repo.name}
               </option>
             ))}
           </select>

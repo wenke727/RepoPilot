@@ -2,7 +2,7 @@
 
 > 对 PRD v1.1 的实现对照与技术细节
 >
-> 更新时间: 2026-02-26
+> 更新时间: 2026-02-27
 
 ---
 
@@ -11,7 +11,7 @@
 Plan 功能是 Claude Code Web Manager 的核心特性，实现 **Plan-first** 工作流：
 1. 先创建 Plan Task，生成执行计划但不执行代码
 2. 人工 Review 计划，回答决策问题
-3. 批准后创建 Do Task 并执行
+3. 批准后同一 Task 切换为 `mode=EXEC` 并进入 `READY`，再由调度器执行
 
 ---
 
@@ -208,19 +208,31 @@ Content-Type: application/json
 }
 ```
 
-**响应:** Task (状态变回 `PLAN_RUNNING`)
+**响应:** Task (状态变回 `TODO`，`mode=PLAN`；后续被 worker 领取时再进入 `PLAN_RUNNING`)
 
 ### 5.3 批量操作
 
 ```http
 # 批量确认
-POST /api/tasks/plan/batch-confirm
+POST /api/tasks/plan/batch/confirm
 {"task_ids": ["id1", "id2"]}
 
 # 批量退回
-POST /api/tasks/plan/batch-revise
+POST /api/tasks/plan/batch/revise
 {"task_ids": ["id1", "id2"], "feedback": "..."}
 ```
+
+### 5.4 Review 完成
+
+```http
+POST /api/tasks/{task_id}/done
+```
+
+行为说明：
+
+- 仅 `REVIEW` 状态任务可调用
+- 调用后状态变为 `DONE`
+- 若为 EXEC 任务，会触发 worktree 清理
 
 ---
 
@@ -229,11 +241,11 @@ POST /api/tasks/plan/batch-revise
 ### 6.1 Plan Task 生命周期
 
 ```
-TODO → PLAN_RUNNING → PLAN_REVIEW → READY → RUNNING → DONE/FAILED
+TODO → PLAN_RUNNING → PLAN_REVIEW → READY → RUNNING → REVIEW → DONE
                                 ↓
                             (修改反馈)
                                 ↓
-                         PLAN_RUNNING
+                              TODO
 ```
 
 ### 6.2 状态说明
@@ -245,8 +257,12 @@ TODO → PLAN_RUNNING → PLAN_REVIEW → READY → RUNNING → DONE/FAILED
 | `PLAN_REVIEW` | 等待人工决策 | 待 Review |
 | `READY` | 已批准，等待执行 | 待开发 |
 | `RUNNING` | 执行中 | 开发中 |
+| `REVIEW` | 代码已提交，等待人工确认完成 | 待 Review |
 | `DONE` | 完成 | 已完成 |
 | `FAILED` | 失败 | 失败 |
+| `CANCELLED` | 已取消 | 已取消 |
+
+看板列是聚合列：`PLAN_RUNNING` 与 `RUNNING` 归并到 RUNNING 列，`PLAN_REVIEW` 与 `REVIEW` 归并到 REVIEW 列。
 
 ---
 
