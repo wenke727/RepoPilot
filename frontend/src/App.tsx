@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { api } from './api/client'
+import { api, AuthRequiredError, clearAuthToken, getAuthToken } from './api/client'
 import type { ExecMode } from './types'
 import BoardPage from './pages/BoardPage'
 import TaskDetailPage from './pages/TaskDetailPage'
+import LoginPage from './pages/LoginPage'
 
 interface RouteState {
   view: 'board' | 'task'
@@ -26,9 +27,26 @@ function navigate(pathname: string, replace = false) {
 export default function App() {
   const [route, setRoute] = useState<RouteState>(() => parseRoute(window.location.pathname))
   const [execMode, setExecModeState] = useState<ExecMode>('AGENTIC')
+  const [authChecked, setAuthChecked] = useState(false)
+  const [needLogin, setNeedLogin] = useState(false)
 
   useEffect(() => {
-    api.getExecMode().then((r) => setExecModeState(r.exec_mode)).catch(() => {})
+    api
+      .getExecMode()
+      .then((r) => {
+        setExecModeState(r.exec_mode)
+        setNeedLogin(false)
+      })
+      .catch((e) => {
+        setNeedLogin(e instanceof AuthRequiredError)
+      })
+      .finally(() => setAuthChecked(true))
+  }, [])
+
+  useEffect(() => {
+    const onAuthRequired = () => setNeedLogin(true)
+    window.addEventListener('auth-required', onAuthRequired)
+    return () => window.removeEventListener('auth-required', onAuthRequired)
   }, [])
 
   const setExecMode = (mode: ExecMode) => {
@@ -46,6 +64,24 @@ export default function App() {
       navigate('/', true)
     }
   }, [route.view])
+
+  if (!authChecked) {
+    return (
+      <div className="login-page" style={{ alignItems: "center", justifyContent: "center" }}>
+        <p style={{ color: "var(--muted)" }}>加载中…</p>
+      </div>
+    )
+  }
+  if (needLogin) {
+    return (
+      <LoginPage
+        onSuccess={() => {
+          setNeedLogin(false)
+          api.getExecMode().then((r) => setExecModeState(r.exec_mode)).catch(() => {})
+        }}
+      />
+    )
+  }
 
   const execModeBar = (
     <header className="app-exec-mode-bar">
@@ -66,6 +102,18 @@ export default function App() {
           FIXED
         </button>
       </div>
+      {getAuthToken() && (
+        <button
+          type="button"
+          className="app-logout-btn"
+          onClick={() => {
+            clearAuthToken()
+            setNeedLogin(true)
+          }}
+        >
+          退出
+        </button>
+      )}
     </header>
   )
 

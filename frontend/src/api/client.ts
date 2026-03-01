@@ -10,14 +10,39 @@ import type {
   PermissionMode,
 } from '../types'
 
+const AUTH_TOKEN_KEY = 'repopilot_token'
+
+export function getAuthToken(): string | null {
+  return sessionStorage.getItem(AUTH_TOKEN_KEY)
+}
+
+export function setAuthToken(token: string): void {
+  sessionStorage.setItem(AUTH_TOKEN_KEY, token)
+}
+
+export function clearAuthToken(): void {
+  sessionStorage.removeItem(AUTH_TOKEN_KEY)
+}
+
+export class AuthRequiredError extends Error {
+  readonly status = 401
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  })
+  const token = getAuthToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(init?.headers as Record<string, string> ?? {}),
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  const resp = await fetch(url, { ...init, headers })
+  if (resp.status === 401) {
+    clearAuthToken()
+    window.dispatchEvent(new CustomEvent('auth-required'))
+    throw new AuthRequiredError('Unauthorized')
+  }
   if (!resp.ok) {
     const text = await resp.text()
     throw new Error(text || `HTTP ${resp.status}`)
@@ -26,6 +51,11 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  login: (username: string, password: string) =>
+    req<{ ok: boolean; token: string | null }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    }),
   listRepos: () => req<RepoConfig[]>('/api/repos'),
   rescanRepos: () => req<RepoConfig[]>('/api/repos/rescan', { method: 'POST' }),
   patchRepo: (repoId: string, payload: Partial<RepoConfig>) =>

@@ -58,6 +58,14 @@
 - `claude` CLI
 - 可选：`gh` CLI、`conda`
 
+## 配置与 .env
+
+后端默认从**项目根目录**的 `.env` 文件加载环境变量（若存在），无需在 shell 里导出。
+
+- 首次使用：复制 `cp .env.example .env`，按需编辑。
+- 可用变量见 `.env.example`；与鉴权相关的说明见下方「可选鉴权」。
+- `.env` 已加入 `.gitignore`，本地账号密码不会进仓库。
+
 ## 快速开始
 
 ### 1. 安装后端依赖
@@ -87,9 +95,18 @@ npm run dev
 ./ops/run_frontend.sh --reload
 ```
 
+## 可选鉴权（暴露于 Tailscale/公网时建议开启）
+
+若将前端暴露在 Tailscale 或公网，建议开启账号密码鉴权，避免未授权访问。
+
+- **配置方式**：在 `.env` 中设置 `REPOPILOT_AUTH_USERNAME`、`REPOPILOT_AUTH_PASSWORD`（**两者都设置**后鉴权才生效）；也可用系统环境变量，`.env` 会先被加载。
+- **使用方式**：启动后端后，访问页面会先进入登录页，输入上述账号密码即可；登录态保存在当前会话（sessionStorage），关闭标签页后需重新登录。顶栏提供「退出」可清除登录态。
+- **不开启时**：不设置或留空上述两项时，行为与之前一致，无鉴权。
+
 ## API 概览
 
 - `GET /api/health`
+- `POST /api/auth/login`（鉴权开启时用于登录，返回 JWT）
 - `GET /api/repos`
 - `POST /api/repos/rescan`
 - `PATCH /api/repos/{id}`
@@ -122,7 +139,7 @@ npm run dev
 
 ## 部署
 
-- 后端 systemd 模板：`ops/systemd/ccwm-backend.service`
+- 后端 systemd 模板：`ops/systemd/ccwm-backend.service`。若需鉴权，在 unit 的 `Environment` 中设置 `REPOPILOT_AUTH_USERNAME`、`REPOPILOT_AUTH_PASSWORD`，或将 `.env` 放在项目根目录（后端启动时会自动加载）。
 - 前端 systemd 模板：`ops/systemd/ccwm-frontend.service`
 - Nginx 反向代理示例：`ops/nginx.conf.example`
 

@@ -3,40 +3,38 @@
 > Claude Code 工作规范 & 多实例并行开发约定
 > 目标：**稳定 / 可恢复 / 可并行 / 可沉淀经验**
 
+本项目是 **Claude Code Web Manager** (RepoPilot)，一个用于管理多仓库 Claude Code 开发任务的单用户 Web 管理系统。
+
 ---
 
 ## 一、任务生命周期（Task Lifecycle）
 
 ### 1. 领取任务（原子操作）
 
-* 从 `data/dev-tasks.json` 获取任务
+* 从 `state/tasks.json` 获取任务
 * 必须是 **原子领取**，防止并发重复执行
+* 支持两种执行模式：`PLAN`（规划模式）和 `EXEC`（执行模式）
 
 ---
 
 ### 2. 创建工作区（Git Worktree）
 
 ```bash
-git worktree add -b task/xxx ../voice-notes-worktrees/task-xxx
+git worktree add -b task/YYMMDD-NNN ../worktrees/repo-name/YYMMDD-NNN
 ```
 
 **工作区约定：**
 
-* 创建隔离的 `data/` 目录（实验数据，仅本实例使用）
+* **隔离目录结构**：`worktrees/<repo-name>/<task-id>/`
+* 每个任务获得独立的 worktree，避免并发冲突
+* 任务完成后自动清理 worktree
 
-* 共享文件（使用 symlink）：
+**共享文件（在 RepoPilot 管理下）：**
 
-  * `dev-tasks.json`（任务队列）
-  * `dev-task.lock`（文件锁）
-  * `api-key.json`（API 密钥）
-
-* `node_modules/` 允许 symlink（加速启动）
-
-* ⚠️ **禁止 symlink：**
-
-  * `PROGRESS.md`（必须直接写主仓库）
-
-* 为每个 worktree 分配 **专属端口**
+* `state/repos.json`（仓库配置）
+* `state/tasks.json`（任务队列）
+* `state/runs.json`（运行记录）
+* `state/logs/`（日志目录）
 
 ---
 
@@ -44,6 +42,8 @@ git worktree add -b task/xxx ../voice-notes-worktrees/task-xxx
 
 * Claude Code **只在当前 worktree 内工作**
 * 不允许跨 worktree 修改文件
+* PLAN 模式：生成结构化执行计划（steps, risks, validation）
+* EXEC 模式：执行实际的代码修改和 Git 操作
 
 ---
 
@@ -53,7 +53,8 @@ git worktree add -b task/xxx ../voice-notes-worktrees/task-xxx
 git commit
 ```
 
-* 只在 `task/xxx` 分支提交
+* 只在 `task/YYMMDD-NNN` 分支提交
+* 遵循项目的 commit message 规范
 
 ---
 
@@ -62,10 +63,12 @@ git commit
 ```bash
 git fetch origin
 git merge origin/main
-npm test
+# 根据项目类型运行测试
+npm test    # 或 pytest, cargo test 等
 ```
 
 * 必须测试通过
+* 如有测试配置，按照项目的 `.github/workflows/` 或 `package.json` 执行
 
 ---
 
@@ -81,7 +84,8 @@ git rebase origin/main
 成功后：
 
 ```bash
-git merge main task-xxx
+git checkout main
+git merge task/YYMMDD-NNN
 git push origin main
 ```
 
@@ -89,29 +93,32 @@ git push origin main
 
 ---
 
-### 7. 标记完成（必须在清理前）
+### 7. 创建 Pull Request（可选）
 
-* 更新 `dev-tasks.json`
+```bash
+gh pr create --title "Task YYMMDD-NNN: ..." --body "..."
+# 或回退到 GitHub API（需要 GITHUB_TOKEN）
+```
+
+---
+
+### 8. 标记完成（必须在清理前）
+
+* 更新 `state/tasks.json`
+* 更新 `state/runs.json`
 * 防止进程被杀导致任务状态丢失
 
 ---
 
-### 8. 清理
+### 9. 清理
 
 ```bash
-git worktree remove
+git worktree remove ../worktrees/repo-name/YYMMDD-NNN
+git branch -d task/YYMMDD-NNN
 ```
 
+* 删除 worktree 目录
 * 删除本地 task 分支
-* 删除远程 task 分支
-* 重启 dev server
-
----
-
-### 9. 经验沉淀（可选但强烈建议）
-
-* 在 `PROGRESS.md` 中记录经验
-* 即使进程被杀，也 **不影响任务状态**
 
 ---
 
@@ -119,33 +126,27 @@ git worktree remove
 
 ### 架构说明
 
-* 支持多个 Claude Code 实例并行工作
-* **每个实例 = 独立 worktree + 独立端口 + 独立 data/**
+* RepoPilot 支持多个 Claude Code 实例并行工作
+* **每个实例 = 独立 worktree + 独立任务 + 独立日志**
 
 ```txt
-并行开发工作流
+并行开发工作流（RepoPilot 管理）
 
-┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-│ Worker 1      │   │ Worker 2      │   │ Worker 3      │
-│ port: 5200    │   │ port: 5201    │   │ port: 5202    │
-│ worktree      │   │ worktree      │   │ worktree      │
-└───────┬───────┘   └───────┬───────┘   └───────┬───────┘
-        │                   │                   │
-      data/               data/               data/
- (隔离的实验数据)
+┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐
+│ Task 260301-001 │   │ Task 260301-002 │   │ Task 260301-003 │
+│ repo: voice-notes│   │ repo: guiagent  │   │ repo: RepoPilot │
+│ worktree        │   │ worktree        │   │ worktree        │
+└────────┬────────┘   └────────┬────────┘   └────────┬────────┘
+         │                     │                     │
+   state/logs/           state/logs/           state/logs/
+   (独立日志文件)
 ```
 
-### 共享文件（symlink）
+### 状态管理
 
-* `dev-tasks.json`
-* `dev-task.lock`
-* `api-key.json`
-
-### ❌ 禁止 symlink
-
-* `PROGRESS.md`
-
-  > 必须使用 `git -C <repo>` 直接修改主仓库文件
+* **任务状态**：`TODO` → `PLAN_RUNNING` → `PLAN_REVIEW` → `READY` → `RUNNING` → `REVIEW` → `DONE` / `FAILED` / `CANCELLED`
+* **看板列**：前端 Web UI 实时展示任务状态
+* **事件流**：所有任务状态变更记录在 `state/runs.json`
 
 ---
 
@@ -179,7 +180,10 @@ git worktree remove
 1. 运行测试：
 
    ```bash
-   npm test
+   # 根据项目类型
+   npm test          # Node.js
+   pytest            # Python
+   cargo test        # Rust
    ```
 
 2. 分析失败原因
@@ -197,21 +201,48 @@ git worktree remove
 
 * rebase / test 失败 **必须修好**
 * 不能因为失败就标记任务失败
+* 失败的任务会保留在 `FAILED` 列，可手动重试
 
 ---
 
-## 四、经验教训沉淀（PROGRESS.md）
+## 四、RepoPilot 特性
 
-每次 **遇到问题 / 完成重要改动** 后，必须记录：
+### PLAN 模式
 
-* 遇到了什么问题
-* 如何解决的
-* 以后如何避免
-* **必须附上 git commit ID**
+* **结构化计划**：生成包含 steps, risks, validation, rollback 的执行计划
+* **批量审核**：支持批量 confirm / revise 计划
+* **回退机制**：EXEC 模式可回退到 PLAN 模式重新规划
 
-📌 **同样的问题不要犯两次**
+### EXEC 模式
+
+* **自动化流水线**：worktree → claude → commit → rebase → test → push → PR
+* **产物快照**：失败/取消任务保留代码快照便于排障
+* **通知中心**：实时推送任务状态变更
+
+### 多仓库管理
+
+* 自动发现 `repos/` 下的仓库
+* 支持托管仓库和本地开发仓库
+* 每个仓库独立的任务队列
 
 ---
 
-> This file defines how Claude Code works.
+## 五、开发规范
+
+### ID 规则
+
+- 格式：`YYMMDD-NNN`
+- 示例：`260301-001`
+- 同日同类型递增分配（task, run, notification 各自独立计数）
+- 若超过 999，回退到 `YYMMDD_HHMMSS` 格式
+
+### 日志记录
+
+* 所有 Claude Code 会话日志保存在 `state/logs/`
+* 格式：`<task-id>_<run-id>_<timestamp>.log`
+* Web UI 提供日志查看和下载
+
+---
+
+> This file defines how Claude Code works in RepoPilot.
 > Stability > Speed. Parallelism > Chaos.

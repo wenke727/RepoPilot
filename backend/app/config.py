@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 _EXEC_MODE_OVERRIDE: str | None = None
 
 
@@ -17,6 +19,12 @@ class Settings:
     logs_retention_days: int = 30
     workers: int = 3
     exec_mode: str = "AGENTIC"
+    auth_username: str | None = None
+    auth_password: str | None = None
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.auth_username and self.auth_password)
 
 
 def get_exec_mode(settings: Settings) -> str:
@@ -42,8 +50,12 @@ def load_settings(root_dir: str | Path | None = None) -> Settings:
     else:
         root = Path(root_dir).resolve()
 
+    load_dotenv(root / ".env")
+
     raw = os.environ.get("REPOPILOT_EXEC_MODE", "AGENTIC")
     exec_mode = "AGENTIC" if raw.upper() == "AGENTIC" else "FIXED"
+    auth_username = os.environ.get("REPOPILOT_AUTH_USERNAME") or None
+    auth_password = os.environ.get("REPOPILOT_AUTH_PASSWORD") or None
 
     return Settings(
         root_dir=root,
@@ -52,4 +64,6 @@ def load_settings(root_dir: str | Path | None = None) -> Settings:
         worktrees_dir=root / "worktrees",
         artifacts_dir=root / "state" / "artifacts",
         exec_mode=exec_mode,
+        auth_username=auth_username,
+        auth_password=auth_password,
     )

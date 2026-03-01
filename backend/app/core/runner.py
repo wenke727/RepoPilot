@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 import subprocess
 import threading
@@ -24,6 +23,7 @@ from app.models import (
     utcnow_iso,
 )
 from app.store.json_store import JsonStore
+from loguru import logger
 
 
 class TaskRunner:
@@ -37,14 +37,14 @@ class TaskRunner:
     )
 
     def __init__(self, store: JsonStore, settings: Settings) -> None:
-        self.logger = logging.getLogger("app.runner")
+        self.log = logger.bind(component="runner")
         self.store = store
         self.settings = settings
         self._proc_lock = threading.Lock()
         self._processes: dict[str, subprocess.Popen[str]] = {}
 
     def cancel(self, task_id: str) -> None:
-        self.logger.info("Terminating process for task=%s", task_id)
+        self.log.info("Terminating process for task {}", task_id)
         with self._proc_lock:
             proc = self._processes.get(task_id)
         if not proc:
@@ -341,7 +341,7 @@ class TaskRunner:
     ) -> bool:
         run = self.store.get_run(run_id)
         if run is None:
-            self.logger.warning("Skip worktree cleanup: run not found task=%s run=%s", task.id, run_id)
+            self.log.warning("Skip worktree cleanup: run not found task={} run={}", task.id, run_id)
             self.store.append_event(
                 task.id,
                 {
@@ -368,7 +368,7 @@ class TaskRunner:
 
         repo = self.store.get_repo(task.repo_id)
         if repo is None:
-            self.logger.warning("Skip worktree cleanup: repo not found task=%s repo=%s", task.id, task.repo_id)
+            self.log.warning("Skip worktree cleanup: repo not found task={} repo={}", task.id, task.repo_id)
             self.store.append_event(
                 task.id,
                 {
@@ -392,9 +392,9 @@ class TaskRunner:
                 )
                 self.store.update_run(run_id, {"metrics": {"artifact_path": str(snapshot)}})
                 self.store.append_event(task.id, {"type": "artifact", "path": str(snapshot)})
-                self.logger.info("Saved failed task artifact task=%s run=%s path=%s", task.id, run_id, snapshot)
+                self.log.info("Saved failed task artifact task={} run={} path={}", task.id, run_id, snapshot)
             except Exception as exc:  # pragma: no cover
-                self.logger.warning("Failed to save task artifact task=%s run=%s err=%s", task.id, run_id, exc)
+                self.log.warning("Failed to save task artifact task={} run={} err={}", task.id, run_id, exc)
 
         try:
             git_ops.cleanup_worktree(repo, worktree, run.branch_name)
@@ -412,7 +412,7 @@ class TaskRunner:
             )
             return True
         except Exception as exc:  # pragma: no cover
-            self.logger.warning("Worktree cleanup failed task=%s run=%s err=%s", task.id, run_id, exc)
+            self.log.warning("Worktree cleanup failed task={} run={} err={}", task.id, run_id, exc)
             self.store.append_event(
                 task.id,
                 {
@@ -454,8 +454,8 @@ class TaskRunner:
 
     def run_task(self, task: Task, worker_id: str) -> None:
         selected_env = select_conda_env()
-        self.logger.info(
-            "Run start task=%s worker=%s mode=%s env=%s",
+        self.log.info(
+            "Run start task={} worker={} mode={} env={}",
             task.id,
             worker_id,
             task.mode.value,
@@ -475,7 +475,7 @@ class TaskRunner:
     def _run_plan(self, task: Task, run_id: str) -> None:
         repo = self.store.get_repo(task.repo_id)
         if not repo:
-            self.logger.error("Plan failed repo not found task=%s repo=%s", task.id, task.repo_id)
+            self.log.error("Plan failed repo not found task={} repo={}", task.id, task.repo_id)
             self._finish_run(run_id, {"exit_code": 1})
             self._mark_failed(task, run_id, "REPO_NOT_FOUND", f"Repo not found: {task.repo_id}")
             return
@@ -486,13 +486,13 @@ class TaskRunner:
         exit_code, text, cancelled = self._stream_claude(task, prompt=prompt, workdir=repo_path)
 
         if cancelled:
-            self.logger.info("Plan cancelled task=%s run=%s", task.id, run_id)
+            self.log.info("Plan cancelled task={} run={}", task.id, run_id)
             self._finish_run(run_id, {"exit_code": exit_code})
             self._mark_cancelled(task, run_id, "任务在 Plan 阶段被取消")
             return
 
         if exit_code != 0:
-            self.logger.warning("Plan failed task=%s run=%s exit=%s", task.id, run_id, exit_code)
+            self.log.warning("Plan failed task={} run={} exit={}", task.id, run_id, exit_code)
             self._finish_run(run_id, {"exit_code": exit_code})
             self._mark_failed(task, run_id, "PLAN_EXIT_NONZERO", f"Claude exited with code {exit_code}")
             return
@@ -516,7 +516,7 @@ class TaskRunner:
                 "body": "请在任务详情中确认 Plan 选项后继续执行。",
             }
         )
-        self.logger.info("Plan ready for review task=%s run=%s", task.id, run_id)
+        self.log.info("Plan ready for review task={} run={}", task.id, run_id)
         self._finish_run(run_id, {"exit_code": 0})
 
     def _build_agentic_prompt(self, task: Task, repo: RepoConfig, branch: str) -> str:
@@ -564,7 +564,7 @@ class TaskRunner:
     def _run_exec_fixed(self, task: Task, run_id: str) -> None:
         repo = self.store.get_repo(task.repo_id)
         if not repo:
-            self.logger.error("Exec failed repo not found task=%s repo=%s", task.id, task.repo_id)
+            self.log.error("Exec failed repo not found task={} repo={}", task.id, task.repo_id)
             self._finish_run(run_id, {"exit_code": 1})
             self._mark_failed(task, run_id, "REPO_NOT_FOUND", f"Repo not found: {task.repo_id}")
             return
@@ -587,19 +587,19 @@ class TaskRunner:
             self.store.append_event(task.id, {"type": "assistant_text", "text": text})
 
             if cancelled:
-                self.logger.info("Exec cancelled task=%s run=%s", task.id, run_id)
+                self.log.info("Exec cancelled task={} run={}", task.id, run_id)
                 self._finish_run(run_id, {"exit_code": exit_code})
                 self._mark_cancelled(task, run_id, "任务在执行阶段被取消")
                 return
 
             if exit_code != 0:
-                self.logger.warning("Exec failed non-zero task=%s run=%s exit=%s", task.id, run_id, exit_code)
+                self.log.warning("Exec failed non-zero task={} run={} exit={}", task.id, run_id, exit_code)
                 self._finish_run(run_id, {"exit_code": exit_code})
                 self._mark_failed(task, run_id, "EXEC_EXIT_NONZERO", f"Claude exited with code {exit_code}")
                 return
 
             if not git_ops.has_material_changes(worktree_info.path, baseline_commit):
-                self.logger.warning("Exec produced no changes task=%s run=%s", task.id, run_id)
+                self.log.warning("Exec produced no changes task={} run={}", task.id, run_id)
                 self._finish_run(run_id, {"exit_code": 1})
                 self._mark_failed(task, run_id, "NO_CHANGES", "Claude finished but produced no git changes")
                 return
@@ -630,22 +630,22 @@ class TaskRunner:
                         "compare_url": pr_url,
                     },
                 )
-                self.logger.warning(
-                    "PR credentials missing, fallback compare URL used task=%s run=%s url=%s",
+                self.log.warning(
+                    "PR credentials missing, fallback compare URL used task={} run={} url={}",
                     task.id,
                     run_id,
                     pr_url,
                 )
 
             self._mark_review(task, run_id, pr_url)
-            self.logger.info("Exec done, moved to REVIEW task=%s run=%s pr=%s", task.id, run_id, pr_url)
+            self.log.info("Exec done, moved to REVIEW task={} run={} pr={}", task.id, run_id, pr_url)
             self._finish_run(run_id, {"exit_code": 0, "commit_sha": commit_sha})
         except git_ops.GitError as exc:
-            self.logger.warning("Git pipeline failed task=%s run=%s err=%s", task.id, run_id, exc)
+            self.log.warning("Git pipeline failed task={} run={} err={}", task.id, run_id, exc)
             self._finish_run(run_id, {"exit_code": 1})
             self._mark_failed(task, run_id, "GIT_PIPELINE_FAILED", str(exc))
         except Exception as exc:  # pragma: no cover
-            self.logger.exception("Unexpected runner error task=%s run=%s", task.id, run_id)
+            self.log.exception("Unexpected runner error task={} run={}", task.id, run_id)
             self._finish_run(run_id, {"exit_code": 1})
             self._mark_failed(task, run_id, "UNEXPECTED_ERROR", str(exc))
         finally:
@@ -662,7 +662,7 @@ class TaskRunner:
     def _run_exec_agentic(self, task: Task, run_id: str) -> None:
         repo = self.store.get_repo(task.repo_id)
         if not repo:
-            self.logger.error("Exec failed repo not found task=%s repo=%s", task.id, task.repo_id)
+            self.log.error("Exec failed repo not found task={} repo={}", task.id, task.repo_id)
             self._finish_run(run_id, {"exit_code": 1})
             self._mark_failed(task, run_id, "REPO_NOT_FOUND", f"Repo not found: {task.repo_id}")
             return
@@ -692,27 +692,27 @@ class TaskRunner:
             self.store.append_event(task.id, {"type": "assistant_text", "text": text})
 
             if cancelled:
-                self.logger.info("Exec cancelled task=%s run=%s", task.id, run_id)
+                self.log.info("Exec cancelled task={} run={}", task.id, run_id)
                 self._finish_run(run_id, {"exit_code": exit_code})
                 self._mark_cancelled(task, run_id, "任务在执行阶段被取消")
                 return
 
             if exit_code != 0:
-                self.logger.warning("Exec failed non-zero task=%s run=%s exit=%s", task.id, run_id, exit_code)
+                self.log.warning("Exec failed non-zero task={} run={} exit={}", task.id, run_id, exit_code)
                 self._finish_run(run_id, {"exit_code": exit_code})
                 self._mark_failed(task, run_id, "EXEC_EXIT_NONZERO", f"Claude exited with code {exit_code}")
                 return
 
             pr_url = self._extract_pr_url(text, repo, worktree_info.branch)
             self._mark_review(task, run_id, pr_url)
-            self.logger.info("Exec done (agentic), moved to REVIEW task=%s run=%s pr=%s", task.id, run_id, pr_url)
+            self.log.info("Exec done (agentic), moved to REVIEW task={} run={} pr={}", task.id, run_id, pr_url)
             self._finish_run(run_id, {"exit_code": 0})
         except git_ops.GitError as exc:
-            self.logger.warning("Git pipeline failed task=%s run=%s err=%s", task.id, run_id, exc)
+            self.log.warning("Git pipeline failed task={} run={} err={}", task.id, run_id, exc)
             self._finish_run(run_id, {"exit_code": 1})
             self._mark_failed(task, run_id, "GIT_PIPELINE_FAILED", str(exc))
         except Exception as exc:  # pragma: no cover
-            self.logger.exception("Unexpected runner error task=%s run=%s", task.id, run_id)
+            self.log.exception("Unexpected runner error task={} run={}", task.id, run_id)
             self._finish_run(run_id, {"exit_code": 1})
             self._mark_failed(task, run_id, "UNEXPECTED_ERROR", str(exc))
         finally:

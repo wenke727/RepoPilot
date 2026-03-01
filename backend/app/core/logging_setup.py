@@ -1,49 +1,54 @@
 from __future__ import annotations
 
 import logging
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
+
+from loguru import logger
+
+
+def _intercept_stdlib_logging() -> None:
+    """将标准库 logging 的日志转发到 loguru，便于 uvicorn 等输出统一格式。"""
+
+    class InterceptHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            try:
+                level = logger.level(record.levelname).name
+            except ValueError:
+                level = record.levelno
+            frame, depth = logging.currentframe(), 2
+            while frame and frame.f_code.co_filename == logging.__file__:
+                frame = frame.f_back
+                depth += 1
+            logger.opt(depth=depth, exception=record.exc_info).log(
+                level, record.getMessage()
+            )
+
+    logging.basicConfig(handlers=[InterceptHandler()], level=logging.INFO, force=True)
 
 
 def setup_logging(logs_dir: Path) -> Path:
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_file = logs_dir / "backend.log"
 
-    formatter = logging.Formatter(
-        fmt="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+    logger.remove()
+    logger.add(
+        lambda msg: print(msg, end=""),
+        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
+        level="INFO",
+        colorize=True,
     )
-
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-
-    for handler in list(root.handlers):
-        root.removeHandler(handler)
-
-    stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.INFO)
-    stream_handler.setFormatter(formatter)
-
-    file_handler = RotatingFileHandler(
+    logger.add(
         log_file,
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5,
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function} - {message}",
+        level="INFO",
+        rotation="10 MB",
+        retention=5,
         encoding="utf-8",
     )
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(formatter)
 
-    root.addHandler(stream_handler)
-    root.addHandler(file_handler)
+    _intercept_stdlib_logging()
 
-    # Route uvicorn and app logs through root handlers.
-    for name in ["uvicorn", "uvicorn.error", "uvicorn.access", "app"]:
-        logger = logging.getLogger(name)
-        logger.handlers = []
-        logger.propagate = True
-        logger.setLevel(logging.INFO)
-
-    logging.getLogger("app").info("Backend logging initialized at %s", log_file)
+    logger.info("Backend logging initialized at {}", log_file)
     return log_file
 
 
