@@ -40,6 +40,8 @@
 
 详细流程文档：[`docs/agentic_coding_flow_draft.md`](docs/agentic_coding_flow_draft.md)
 
+设计对齐提案：[`docs/claude_driven_alignment_plan.md`](docs/claude_driven_alignment_plan.md)
+
 ## ID 规则
 
 - 新的 `task.id`、`run.id`、`notification.id` 使用格式：`YYMMDD-NNN`

@@ -1792,3 +1792,221 @@ select {
     font-size: 18px;
   }
 }
+
+/* Exec mode bar (global) */
+.app-exec-mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 22px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.app-exec-mode-label {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.app-exec-mode-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.app-exec-mode-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.app-exec-mode-btn:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.app-exec-mode-btn.active {
+  border-color: #4d73ce;
+  background: #e9f1ff;
+  color: #4d73ce;
+}
+
+/* Strategy card */
+.strategy-card {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.strategy-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.strategy-card-template {
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: #e9f1ff;
+  color: #4d73ce;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.strategy-card-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.strategy-rationale {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.strategy-steps-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.strategy-step-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.strategy-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.strategy-step:last-child {
+  border-bottom: none;
+}
+
+.strategy-step-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 14px;
+}
+
+.strategy-step-icon-pending {
+  color: var(--muted);
+  background: var(--bg);
+}
+
+.strategy-step-icon-running {
+  color: #4d73ce;
+  background: #e9f1ff;
+}
+
+.strategy-step-icon-done {
+  color: var(--success);
+  background: rgba(118, 192, 143, 0.15);
+}
+
+.strategy-step-icon-failed {
+  color: var(--danger);
+  background: rgba(212, 96, 96, 0.1);
+}
+
+.strategy-step-icon-skipped {
+  color: var(--muted);
+  background: var(--bg);
+}
+
+.strategy-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.strategy-step-label {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.strategy-step-status {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.strategy-step-reason {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.strategy-decisions {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.strategy-decisions-toggle {
+  padding: 6px 0;
+  border: none;
+  background: none;
+  color: #4d73ce;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.strategy-decisions-toggle:hover {
+  text-decoration: underline;
+}
+
+.strategy-decision-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.strategy-decision {
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.strategy-decision-question {
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.strategy-decision-choice {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.strategy-decision-reason {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.35;
+}

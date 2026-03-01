@@ -31,6 +31,53 @@ class PermissionMode(str, Enum):
     DEFAULT = "DEFAULT"
 
 
+class ExecMode(str, Enum):
+    AGENTIC = "AGENTIC"
+    FIXED = "FIXED"
+
+
+class StrategyStepType(str, Enum):
+    CODING = "CODING"
+    COMMIT = "COMMIT"
+    REBASE = "REBASE"
+    TEST = "TEST"
+    PUSH = "PUSH"
+    CREATE_PR = "CREATE_PR"
+
+
+class StrategyStepStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class StrategyDecision(BaseModel):
+    key: str
+    question: str = ""
+    choice: str = ""
+    reason: str = ""
+
+
+class StrategyStep(BaseModel):
+    type: StrategyStepType
+    label: str = ""
+    params: dict[str, Any] = Field(default_factory=dict)
+    skip: bool = False
+    reason: str = ""
+    status: StrategyStepStatus = StrategyStepStatus.PENDING
+
+
+class ExecStrategy(BaseModel):
+    template: str = ""
+    steps: list[StrategyStep] = Field(default_factory=list)
+    decisions: list[StrategyDecision] = Field(default_factory=list)
+    rationale: str = ""
+    raw_text: str = ""
+    valid: bool = False
+
+
 class RepoConfig(BaseModel):
     id: str
     name: str
@@ -88,6 +135,7 @@ class Task(BaseModel):
     claude_session_id: str | None = None
     plan_result: PlanResult | None = None
     plan_answers: dict[str, str] = Field(default_factory=dict)
+    exec_strategy: ExecStrategy | None = None
     pr_url: str = ""
     error_code: str = ""
     error_message: str = ""

@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { api } from './api/client'
+import type { ExecMode } from './types'
 import BoardPage from './pages/BoardPage'
 import TaskDetailPage from './pages/TaskDetailPage'
 
@@ -23,6 +25,15 @@ function navigate(pathname: string, replace = false) {
 
 export default function App() {
   const [route, setRoute] = useState<RouteState>(() => parseRoute(window.location.pathname))
+  const [execMode, setExecModeState] = useState<ExecMode>('AGENTIC')
+
+  useEffect(() => {
+    api.getExecMode().then((r) => setExecModeState(r.exec_mode)).catch(() => {})
+  }, [])
+
+  const setExecMode = (mode: ExecMode) => {
+    api.setExecMode(mode).then((r) => setExecModeState(r.exec_mode)).catch(() => {})
+  }
 
   useEffect(() => {
     const onPopState = () => setRoute(parseRoute(window.location.pathname))
@@ -36,15 +47,45 @@ export default function App() {
     }
   }, [route.view])
 
+  const execModeBar = (
+    <header className="app-exec-mode-bar">
+      <span className="app-exec-mode-label">执行模式</span>
+      <div className="app-exec-mode-toggle">
+        <button
+          type="button"
+          className={execMode === 'AGENTIC' ? 'app-exec-mode-btn active' : 'app-exec-mode-btn'}
+          onClick={() => setExecMode('AGENTIC')}
+        >
+          AGENTIC
+        </button>
+        <button
+          type="button"
+          className={execMode === 'FIXED' ? 'app-exec-mode-btn active' : 'app-exec-mode-btn'}
+          onClick={() => setExecMode('FIXED')}
+        >
+          FIXED
+        </button>
+      </div>
+    </header>
+  )
+
   if (route.view === 'task' && route.taskId) {
     return (
-      <TaskDetailPage
-        taskId={route.taskId}
-        onBack={() => window.history.back()}
-        onBackFallback={() => navigate('/')}
-      />
+      <>
+        {execModeBar}
+        <TaskDetailPage
+          taskId={route.taskId}
+          onBack={() => window.history.back()}
+          onBackFallback={() => navigate('/')}
+        />
+      </>
     )
   }
 
-  return <BoardPage onOpenTask={(taskId) => navigate(`/task/${encodeURIComponent(taskId)}`)} />
+  return (
+    <>
+      {execModeBar}
+      <BoardPage onOpenTask={(taskId) => navigate(`/task/${encodeURIComponent(taskId)}`)} />
+    </>
+  )
 }

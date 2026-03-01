@@ -12,6 +12,47 @@ export type TaskStatus =
 export type TaskMode = 'PLAN' | 'EXEC'
 export type PermissionMode = 'BYPASS' | 'DEFAULT'
 
+export type ExecMode = "AGENTIC" | "FIXED"
+export type StrategyStepType =
+  | "CODING"
+  | "COMMIT"
+  | "REBASE"
+  | "TEST"
+  | "PUSH"
+  | "CREATE_PR"
+
+export type StrategyStepStatus =
+  | "pending"
+  | "running"
+  | "done"
+  | "failed"
+  | "skipped"
+
+export interface StrategyStep {
+  type: StrategyStepType
+  label: string
+  params: Record<string, unknown>
+  skip: boolean
+  reason: string
+  status: StrategyStepStatus
+}
+
+export interface StrategyDecision {
+  key: string
+  question: string
+  choice: string
+  reason: string
+}
+
+export interface ExecStrategy {
+  template: string
+  steps: StrategyStep[]
+  decisions: StrategyDecision[]
+  rationale: string
+  raw_text: string
+  valid: boolean
+}
+
 export interface RepoConfig {
   id: string
   name: string
@@ -67,6 +108,7 @@ export interface Task {
   claude_session_id?: string
   plan_result?: PlanResult
   plan_answers: Record<string, string>
+  exec_strategy?: ExecStrategy
   pr_url: string
   error_code: string
   error_message: string

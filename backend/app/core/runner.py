@@ -10,11 +10,19 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from app.config import Settings
+from app.config import Settings, get_exec_mode
 from app.core import git_ops
 from app.core.env import select_conda_env
 from app.core.plan_parser import parse_plan, plan_prompt
-from app.models import PermissionMode, Task, TaskMode, TaskStatus, utcnow_iso
+from app.core.strategy import build_default_strategy
+from app.models import (
+    PermissionMode,
+    RepoConfig,
+    Task,
+    TaskMode,
+    TaskStatus,
+    utcnow_iso,
+)
 from app.store.json_store import JsonStore
 
 
@@ -459,7 +467,10 @@ class TaskRunner:
             self._run_plan(task, run.id)
             return
 
-        self._run_exec(task, run.id)
+        if get_exec_mode(self.settings) == "FIXED":
+            self._run_exec_fixed(task, run.id)
+        else:
+            self._run_exec_agentic(task, run.id)
 
     def _run_plan(self, task: Task, run_id: str) -> None:
         repo = self.store.get_repo(task.repo_id)
@@ -508,7 +519,49 @@ class TaskRunner:
         self.logger.info("Plan ready for review task=%s run=%s", task.id, run_id)
         self._finish_run(run_id, {"exit_code": 0})
 
-    def _run_exec(self, task: Task, run_id: str) -> None:
+    def _build_agentic_prompt(self, task: Task, repo: RepoConfig, branch: str) -> str:
+        """Build task prompt with post-coding instructions for Claude to run git/test/push/PR."""
+        main = repo.main_branch
+        test_cmd = (repo.test_command or "").strip()
+        has_github = bool(repo.github_repo and "/" in repo.github_repo.strip())
+        lines = [
+            task.prompt,
+            "",
+            "---",
+            "【编码完成后请自行执行以下步骤，使用终端命令完成】",
+            "",
+            "1. 提交变更:",
+            "   git add -A && git commit -m \"task(" + task.id + "): apply changes\"",
+            "",
+            "2. 变基到主分支（若有冲突请解决后 git add 再 git rebase --continue）:",
+            f"   git fetch origin {main} && git rebase origin/{main}",
+            "",
+        ]
+        if test_cmd:
+            lines.append("3. 运行测试:")
+            lines.append(f"   {test_cmd}")
+            lines.append("")
+            lines.append("4. 推送当前分支:")
+        else:
+            lines.append("3. 推送当前分支:")
+        lines.append(f"   git push -u origin {branch}")
+        if has_github:
+            lines.append("")
+            lines.append("5. 创建 PR（若 gh 可用）:")
+            lines.append(f"   gh pr create --base {main} --head {branch} --title \"[{task.id}] {task.title}\" --body \"Automated by RepoPilot\"")
+        lines.append("")
+        return "\n".join(lines)
+
+    def _extract_pr_url(self, text: str, repo: RepoConfig | None, branch: str) -> str:
+        """Extract first GitHub PR URL from Claude output; fallback to compare URL if none."""
+        match = re.search(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+", text)
+        if match:
+            return match.group(0)
+        if repo and repo.github_repo and "/" in repo.github_repo.strip():
+            return git_ops.build_compare_url(repo.github_repo, repo.main_branch, branch) or ""
+        return ""
+
+    def _run_exec_fixed(self, task: Task, run_id: str) -> None:
         repo = self.store.get_repo(task.repo_id)
         if not repo:
             self.logger.error("Exec failed repo not found task=%s repo=%s", task.id, task.repo_id)
@@ -587,6 +640,73 @@ class TaskRunner:
             self._mark_review(task, run_id, pr_url)
             self.logger.info("Exec done, moved to REVIEW task=%s run=%s pr=%s", task.id, run_id, pr_url)
             self._finish_run(run_id, {"exit_code": 0, "commit_sha": commit_sha})
+        except git_ops.GitError as exc:
+            self.logger.warning("Git pipeline failed task=%s run=%s err=%s", task.id, run_id, exc)
+            self._finish_run(run_id, {"exit_code": 1})
+            self._mark_failed(task, run_id, "GIT_PIPELINE_FAILED", str(exc))
+        except Exception as exc:  # pragma: no cover
+            self.logger.exception("Unexpected runner error task=%s run=%s", task.id, run_id)
+            self._finish_run(run_id, {"exit_code": 1})
+            self._mark_failed(task, run_id, "UNEXPECTED_ERROR", str(exc))
+        finally:
+            if worktree_info is not None:
+                task_after = self.store.get_task(task.id)
+                if task_after and task_after.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
+                    self._cleanup_exec_worktree_for_run(
+                        task=task_after,
+                        run_id=run_id,
+                        trigger_status=task_after.status,
+                        snapshot_on_failure=True,
+                    )
+
+    def _run_exec_agentic(self, task: Task, run_id: str) -> None:
+        repo = self.store.get_repo(task.repo_id)
+        if not repo:
+            self.logger.error("Exec failed repo not found task=%s repo=%s", task.id, task.repo_id)
+            self._finish_run(run_id, {"exit_code": 1})
+            self._mark_failed(task, run_id, "REPO_NOT_FOUND", f"Repo not found: {task.repo_id}")
+            return
+
+        worktree_info: git_ops.WorktreeInfo | None = None
+        try:
+            worktree_info = git_ops.create_worktree(repo, self.settings.worktrees_dir, task.id, task.title)
+            self.store.update_run(
+                run_id,
+                {"worktree_path": str(worktree_info.path), "branch_name": worktree_info.branch},
+            )
+            git_ops.setup_isolated_data(worktree_info.path, repo)
+
+            strategy = build_default_strategy(repo)
+            self.store.update_task(task.id, {"exec_strategy": strategy.model_dump()})
+            self.store.append_event(
+                task.id,
+                {"type": "strategy_generated", "message": strategy.rationale or "Claude 全权执行（编码 + 提交/变基/测试/推送/PR）"},
+            )
+
+            prompt = self._build_agentic_prompt(task, repo, worktree_info.branch)
+            exit_code, text, cancelled = self._stream_claude(
+                task,
+                prompt=prompt,
+                workdir=worktree_info.path,
+            )
+            self.store.append_event(task.id, {"type": "assistant_text", "text": text})
+
+            if cancelled:
+                self.logger.info("Exec cancelled task=%s run=%s", task.id, run_id)
+                self._finish_run(run_id, {"exit_code": exit_code})
+                self._mark_cancelled(task, run_id, "任务在执行阶段被取消")
+                return
+
+            if exit_code != 0:
+                self.logger.warning("Exec failed non-zero task=%s run=%s exit=%s", task.id, run_id, exit_code)
+                self._finish_run(run_id, {"exit_code": exit_code})
+                self._mark_failed(task, run_id, "EXEC_EXIT_NONZERO", f"Claude exited with code {exit_code}")
+                return
+
+            pr_url = self._extract_pr_url(text, repo, worktree_info.branch)
+            self._mark_review(task, run_id, pr_url)
+            self.logger.info("Exec done (agentic), moved to REVIEW task=%s run=%s pr=%s", task.id, run_id, pr_url)
+            self._finish_run(run_id, {"exit_code": 0})
         except git_ops.GitError as exc:
             self.logger.warning("Git pipeline failed task=%s run=%s err=%s", task.id, run_id, exc)
             self._finish_run(run_id, {"exit_code": 1})

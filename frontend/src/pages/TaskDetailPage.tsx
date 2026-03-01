@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api/client'
 import PlanChoiceCard from '../components/PlanChoiceCard'
+import StrategyCard from '../components/StrategyCard'
 import {
   deriveInitialAnswers,
   detectPlanQuestionNoise,
@@ -914,6 +915,10 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
         {error && <div className="task-detail-error">
           <strong>轮询异常:</strong> {error}
         </div>}
+
+        {currentTask.exec_strategy && (
+          <StrategyCard strategy={currentTask.exec_strategy} />
+        )}
 
         {canPlanReview && (
           <div className="plan-sticky-shell">

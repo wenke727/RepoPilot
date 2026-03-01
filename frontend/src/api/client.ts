@@ -1,6 +1,7 @@
 import type {
   BoardResponse,
   EventBatch,
+  ExecMode,
   NotificationItem,
   PlanBatchActionResult,
   RepoConfig,
@@ -67,4 +68,10 @@ export const api = {
     }),
   listNotifications: () => req<NotificationItem[]>('/api/notifications'),
   markNotificationRead: (id: string) => req<NotificationItem>(`/api/notifications/${id}/read`, { method: 'POST' }),
+  getExecMode: () => req<{ exec_mode: ExecMode }>('/api/settings/exec-mode'),
+  setExecMode: (mode: ExecMode) =>
+    req<{ exec_mode: ExecMode }>('/api/settings/exec-mode', {
+      method: 'PUT',
+      body: JSON.stringify({ exec_mode: mode }),
+    }),
 }

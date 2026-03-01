@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import board, health, logs, notifications, repos, tasks
+from app.api import board, health, logs, notifications, repos, settings, tasks
 from app.config import load_settings
 from app.core.logging_setup import setup_logging
 from app.core.runner import TaskRunner
@@ -44,6 +44,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
+app.include_router(settings.router)
 app.include_router(repos.router)
 app.include_router(tasks.router)
 app.include_router(board.router)
