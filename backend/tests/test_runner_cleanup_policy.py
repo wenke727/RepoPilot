@@ -73,7 +73,7 @@ def test_exec_success_keeps_worktree_until_done(tmp_path: Path, monkeypatch):
     worktree.mkdir(parents=True, exist_ok=True)
 
     _mock_exec_pipeline(monkeypatch, worktree)
-    monkeypatch.setattr(runner, "_stream_claude", lambda task, prompt, workdir: (0, "assistant-output", False))
+    monkeypatch.setattr(runner, "_stream_claude", lambda task, prompt, workdir, timeout_seconds=2700: (0, "assistant-output", False))
 
     cleanup_calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -81,7 +81,7 @@ def test_exec_success_keeps_worktree_until_done(tmp_path: Path, monkeypatch):
         lambda repo, path, branch: cleanup_calls.append((str(path), branch)),
     )
 
-    runner._run_exec(task, run.id)
+    runner._run_exec_fixed(task, run.id)
 
     task_after = store.get_task(task.id)
     run_after = store.get_run(run.id)
@@ -103,7 +103,7 @@ def test_exec_failed_cleans_worktree_and_clears_path(tmp_path: Path, monkeypatch
     worktree.mkdir(parents=True, exist_ok=True)
 
     _mock_exec_pipeline(monkeypatch, worktree)
-    monkeypatch.setattr(runner, "_stream_claude", lambda task, prompt, workdir: (1, "", False))
+    monkeypatch.setattr(runner, "_stream_claude", lambda task, prompt, workdir, timeout_seconds=2700: (1, "", False))
 
     order: list[str] = []
     snapshot_path = tmp_path / "state" / "artifacts" / task.id / run.id
@@ -119,7 +119,7 @@ def test_exec_failed_cleans_worktree_and_clears_path(tmp_path: Path, monkeypatch
     monkeypatch.setattr("app.core.runner.git_ops.snapshot_worktree", _snapshot)
     monkeypatch.setattr("app.core.runner.git_ops.cleanup_worktree", _cleanup)
 
-    runner._run_exec(task, run.id)
+    runner._run_exec_fixed(task, run.id)
 
     task_after = store.get_task(task.id)
     run_after = store.get_run(run.id)
@@ -142,7 +142,7 @@ def test_exec_cancelled_cleans_with_artifact_then_clears_path(tmp_path: Path, mo
     worktree.mkdir(parents=True, exist_ok=True)
 
     _mock_exec_pipeline(monkeypatch, worktree)
-    monkeypatch.setattr(runner, "_stream_claude", lambda task, prompt, workdir: (0, "", True))
+    monkeypatch.setattr(runner, "_stream_claude", lambda task, prompt, workdir, timeout_seconds=2700: (0, "", True))
 
     order: list[str] = []
     snapshot_path = tmp_path / "state" / "artifacts" / task.id / run.id
@@ -158,7 +158,7 @@ def test_exec_cancelled_cleans_with_artifact_then_clears_path(tmp_path: Path, mo
     monkeypatch.setattr("app.core.runner.git_ops.snapshot_worktree", _snapshot)
     monkeypatch.setattr("app.core.runner.git_ops.cleanup_worktree", _cleanup)
 
-    runner._run_exec(task, run.id)
+    runner._run_exec_fixed(task, run.id)
 
     task_after = store.get_task(task.id)
     run_after = store.get_run(run.id)
@@ -168,3 +168,41 @@ def test_exec_cancelled_cleans_with_artifact_then_clears_path(tmp_path: Path, mo
     assert run_after.worktree_path == ""
     assert run_after.metrics.get("artifact_path") == str(snapshot_path)
     assert order == ["snapshot", "cleanup"]
+
+
+def test_exec_fixed_pr_body_uses_claude_summary(tmp_path: Path, monkeypatch):
+    store = _create_store(tmp_path)
+    _inject_demo_repo(store, tmp_path / "repos" / "demo")
+    runner = TaskRunner(store, load_settings(tmp_path))
+
+    task = _create_exec_task(store, "pr-summary")
+    run = store.create_run(task.id, worker_id="worker-1", python_env_used="test-env")
+    worktree = tmp_path / "worktrees" / "demo" / task.id
+    worktree.mkdir(parents=True, exist_ok=True)
+
+    _mock_exec_pipeline(monkeypatch, worktree)
+
+    responses = iter(
+        [
+            (0, "assistant-output", False),
+            (
+                0,
+                "## Motivation\n- Improve PR readability.\n\n## Description\n- Add Claude-generated summary body in fixed flow.",
+                False,
+            ),
+        ]
+    )
+    monkeypatch.setattr(runner, "_stream_claude", lambda task, prompt, workdir, timeout_seconds=2700: next(responses))
+
+    captured: dict[str, str] = {}
+
+    def _create_pr(*args, **kwargs):
+        captured["body"] = kwargs["body"]
+        return "https://example.com/pr/1"
+
+    monkeypatch.setattr("app.core.runner.git_ops.create_pr", _create_pr)
+
+    runner._run_exec_fixed(task, run.id)
+
+    assert "## Motivation" in captured["body"]
+    assert "## Description" in captured["body"]
