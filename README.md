@@ -36,6 +36,7 @@
 - EXEC Git 流水线：`worktree -> claude -> commit -> rebase -> test -> push -> PR`
 - PR 优先用 `gh` 创建，失败时回退 GitHub API（需 `GITHUB_TOKEN`）
 - 事件流与通知中心
+- 任务创建支持语音输入（前端录音 + OpenAI 转录）
 - 失败/取消任务的产物快照（便于排障）
 
 详细流程文档：[`docs/agentic_coding_flow_draft.md`](docs/agentic_coding_flow_draft.md)
@@ -56,6 +57,7 @@
 - Node.js 18+
 - `git`
 - `claude` CLI
+- 语音输入可选依赖：`OPENAI_API_KEY`（用于 `/api/audio/transcribe`）
 - 可选：`gh` CLI、`conda`
 
 ## 配置与 .env
@@ -121,6 +123,7 @@ npm run dev
 - `POST /api/tasks/{id}/plan/revise`
 - `POST /api/tasks/plan/batch/confirm`
 - `POST /api/tasks/plan/batch/revise`
+- `POST /api/audio/transcribe`
 - `GET /api/board`
 - `GET /api/logs/backend`
 - `GET /api/notifications`

@@ -104,4 +104,20 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ exec_mode: mode }),
     }),
+  transcribeAudio: async (file: File, language = 'zh') => {
+    const payload = await file.arrayBuffer()
+    const resp = await fetch(`/api/audio/transcribe?language=${encodeURIComponent(language)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': file.type || 'application/octet-stream',
+        'X-Audio-Filename': file.name,
+      },
+      body: payload,
+    })
+    if (!resp.ok) {
+      const text = await resp.text()
+      throw new Error(text || `HTTP ${resp.status}`)
+    }
+    return (await resp.json()) as { text: string }
+  },
 }

@@ -166,6 +166,12 @@ select {
   min-width: 58px;
 }
 
+.composer-mic.is-recording {
+  color: #fff;
+  background: #f05b72;
+  border-color: #f05b72;
+}
+
 .composer-add {
   min-width: 84px;
 }

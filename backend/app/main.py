@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from app.api import auth, board, health, logs, notifications, repos, settings, tasks
+from app.api import auth, audio, board, health, logs, notifications, repos, settings, tasks
 from app.middleware.auth_middleware import AuthMiddleware
 from app.config import load_settings
 from app.core.logging_setup import setup_logging
@@ -58,6 +58,7 @@ app.include_router(auth.router)
 app.include_router(settings.router)
 app.include_router(repos.router)
 app.include_router(tasks.router)
+app.include_router(audio.router)
 app.include_router(board.router)
 app.include_router(notifications.router)
 app.include_router(logs.router)

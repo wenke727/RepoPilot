@@ -1,4 +1,5 @@
 import { useMemo, useState, type KeyboardEvent } from 'react'
+import { api } from '../api/client'
 import type { PermissionMode, TaskMode } from '../types'
 
 interface Props {
@@ -28,6 +29,53 @@ export default function TaskComposer({ selectedRepoId, onCreate }: Props) {
   const permissionMode: PermissionMode = 'BYPASS'
   const priority = 0
   const [submitting, setSubmitting] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
+
+  async function onVoiceInput() {
+    if (recording || transcribing) return
+    if (!navigator.mediaDevices?.getUserMedia) {
+      window.alert('当前浏览器不支持录音。')
+      return
+    }
+
+    let stream: MediaStream | null = null
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const recorder = new MediaRecorder(stream)
+      const chunks: BlobPart[] = []
+      setRecording(true)
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data)
+      }
+
+      recorder.start()
+      await new Promise<void>((resolve) => {
+        window.setTimeout(() => {
+          recorder.stop()
+          resolve()
+        }, 5000)
+      })
+      await new Promise<void>((resolve) => {
+        recorder.onstop = () => resolve()
+      })
+
+      setRecording(false)
+      setTranscribing(true)
+      const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })
+      const audioFile = new File([blob], 'voice-input.webm', { type: blob.type || 'audio/webm' })
+      const result = await api.transcribeAudio(audioFile, 'zh')
+      const nextPrompt = [prompt.trim(), result.text.trim()].filter(Boolean).join('\n')
+      setPrompt(nextPrompt)
+    } catch (error) {
+      console.error(error)
+      window.alert('语音输入失败，请检查麦克风权限或 OpenAI 配置。')
+    } finally {
+      setRecording(false)
+      setTranscribing(false)
+      stream?.getTracks().forEach((track) => track.stop())
+    }
+  }
 
   const disabled = useMemo(() => !prompt.trim() || !selectedRepoId, [prompt, selectedRepoId])
 
@@ -68,8 +116,14 @@ export default function TaskComposer({ selectedRepoId, onCreate }: Props) {
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={onPromptKeyDown}
         />
-        <button className="icon-btn composer-mic" type="button" aria-label="语音输入">
-          语音
+        <button
+          className={recording ? 'icon-btn composer-mic is-recording' : 'icon-btn composer-mic'}
+          type="button"
+          aria-label="语音输入"
+          disabled={recording || transcribing}
+          onClick={() => void onVoiceInput()}
+        >
+          {recording ? '录音中' : transcribing ? '识别中' : '语音'}
         </button>
         <button className="button button-primary composer-add" onClick={submit} disabled={disabled || submitting}>
           {submitting ? '提交中...' : '添加'}

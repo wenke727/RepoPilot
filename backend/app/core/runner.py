@@ -561,6 +561,65 @@ class TaskRunner:
             return git_ops.build_compare_url(repo.github_repo, repo.main_branch, branch) or ""
         return ""
 
+    def _build_fixed_pr_summary_prompt(self, task: Task) -> str:
+        lines = [
+            "请基于本会话刚完成的代码改动，生成 GitHub Pull Request 正文。",
+            "要求：",
+            "1) 使用英文；",
+            "2) 只输出 Markdown，不要代码块；",
+            "3) 必须包含二级标题 `## Motivation` 与 `## Description`；",
+            "4) 每个标题下使用项目符号列表；",
+            "5) 内容务必基于实际改动，不要臆造。",
+            "",
+            f"Task ID: {task.id}",
+            f"Task Title: {task.title}",
+            "Original request:",
+            task.prompt,
+        ]
+        return "\n".join(lines)
+
+    def _generate_fixed_pr_body(self, task: Task, workdir: Path) -> str:
+        fallback = "Automated by Claude Code Web Manager"
+        prompt = self._build_fixed_pr_summary_prompt(task)
+        exit_code, text, cancelled = self._stream_claude(
+            task,
+            prompt=prompt,
+            workdir=workdir,
+            timeout_seconds=300,
+        )
+
+        if cancelled:
+            self.store.append_event(
+                task.id,
+                {
+                    "type": "pr_body_fallback",
+                    "message": "PR body summary cancelled, fallback to default template",
+                },
+            )
+            return fallback
+        if exit_code != 0 or not text.strip():
+            self.store.append_event(
+                task.id,
+                {
+                    "type": "pr_body_fallback",
+                    "message": f"PR body summary failed (exit={exit_code}), fallback to default template",
+                },
+            )
+            return fallback
+
+        body = text.strip()
+        if "## Motivation" not in body or "## Description" not in body:
+            self.store.append_event(
+                task.id,
+                {
+                    "type": "pr_body_fallback",
+                    "message": "PR body summary missing required sections, fallback to default template",
+                },
+            )
+            return fallback
+
+        return body
+
     def _run_exec_fixed(self, task: Task, run_id: str) -> None:
         repo = self.store.get_repo(task.repo_id)
         if not repo:
@@ -611,12 +670,14 @@ class TaskRunner:
             git_ops.run_tests(worktree_info.path, repo.test_command)
             git_ops.push_branch(worktree_info.path, worktree_info.branch)
 
+            pr_body = self._generate_fixed_pr_body(task, worktree_info.path)
+
             try:
                 pr_url = git_ops.create_pr(
                     repo,
                     branch=worktree_info.branch,
                     title=f"[{task.id}] {task.title}",
-                    body="Automated by Claude Code Web Manager",
+                    body=pr_body,
                 )
             except git_ops.PRCredentialsMissing as exc:
                 pr_url = git_ops.build_compare_url(repo.github_repo, repo.main_branch, worktree_info.branch)
