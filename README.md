@@ -33,7 +33,7 @@
   - `POST /api/tasks/plan/batch/confirm`
   - `POST /api/tasks/plan/batch/revise`
 - Claude 驱动主链路：`TODO -> PLAN_RUNNING -> PLAN_REVIEW -> READY -> RUNNING -> REVIEW -> DONE`
-- EXEC Git 流水线：`worktree -> claude -> commit -> rebase -> test -> push -> PR`
+- EXEC Git 流水线：`worktree -> agent-cli -> commit -> rebase -> test -> push -> PR`
 - PR 优先用 `gh` 创建，失败时回退 GitHub API（需 `GITHUB_TOKEN`）
 - 事件流与通知中心
 - 任务创建支持语音输入（前端录音 + OpenAI 转录）
@@ -56,9 +56,9 @@
 - Python 3.10+
 - Node.js 18+
 - `git`
-- `claude` CLI
+- `claude-kimi` CLI（默认）或 `claude-glm` CLI，或 `claude` CLI
 - 语音输入可选依赖：`OPENAI_API_KEY`（用于 `/api/audio/transcribe`）
-- 可选：`gh` CLI、`conda`
+- 可选：`gh` CLI、`conda`、`cursor` CLI（预留驱动）
 
 ## 配置与 .env
 
@@ -67,6 +67,11 @@
 - 首次使用：复制 `cp .env.example .env`，按需编辑。
 - 可用变量见 `.env.example`；与鉴权相关的说明见下方「可选鉴权」。
 - `.env` 已加入 `.gitignore`，本地账号密码不会进仓库。
+- 驱动相关变量：
+  - `REPOPILOT_AGENT_DRIVER`：`CLAUDE` / `CLAUDE_KIMI`（默认）/ `CLAUDE_GLM` / `CURSOR_CLI`（预留，不可切换使用）
+  - `REPOPILOT_AGENT_SHELL`：KIMI/GLM 模板执行所用 shell（默认 `zsh`）
+  - `REPOPILOT_CLAUDE_KIMI_SHELL_TEMPLATE`、`REPOPILOT_CLAUDE_GLM_SHELL_TEMPLATE`：KIMI/GLM shell 模板（默认 `claude-kimi` / `claude-glm`，用于兼容 alias/function）
+  - `REPOPILOT_CLAUDE_CMD`、`REPOPILOT_CLAUDE_KIMI_CMD`、`REPOPILOT_CLAUDE_GLM_CMD`、`REPOPILOT_CURSOR_CLI_CMD`：直连命令映射（当模板为空时 KIMI/GLM 回退到对应命令）
 
 ## 快速开始
 
@@ -97,6 +102,16 @@ npm run dev
 ./ops/run_frontend.sh --reload
 ```
 
+### 4. 手机/其他设备访问与「打不开」排查
+
+要在 iPhone 或同一局域网内另一台设备打开看板，请用 **`./ops/run_frontend.sh`** 启动前端（会监听 `0.0.0.0:5173`），不要只用 `npm run dev` 且不传 `--host`。
+
+- **访问地址**：在手机浏览器输入 `http://<本机 IP>:5173`，例如 `http://192.168.1.10:5173`。本机 IP 可用 `ipconfig getifaddr en0`（macOS）查看。
+- **打不开时逐项检查**：
+  1. 前端是否已用 `./ops/run_frontend.sh` 启动，终端有无报错。
+  2. 手机与电脑是否在同一 WiFi（或同一网段）。
+  3. macOS 防火墙：**系统设置 → 网络 → 防火墙** 中，若开启了防火墙，需允许「Node」或对应开发工具的传入连接，或临时关闭防火墙测试。
+  4. 公司/公共 WiFi 若有「客户端隔离」，同一 WiFi 下设备无法互访，可改用手机热点让电脑连上后再用手机访问。
 ## 可选鉴权（暴露于 Tailscale/公网时建议开启）
 
 若将前端暴露在 Tailscale 或公网，建议开启账号密码鉴权，避免未授权访问。
@@ -109,12 +124,17 @@ npm run dev
 
 - `GET /api/health`
 - `POST /api/auth/login`（鉴权开启时用于登录，返回 JWT）
+- `GET /api/settings/exec-mode`
+- `PUT /api/settings/exec-mode`
+- `GET /api/settings/agent-driver`
+- `PUT /api/settings/agent-driver`
 - `GET /api/repos`
 - `POST /api/repos/rescan`
 - `PATCH /api/repos/{id}`
 - `GET /api/tasks`
 - `POST /api/tasks`
 - `GET /api/tasks/{id}`
+- `DELETE /api/tasks/{id}`
 - `GET /api/tasks/{id}/events`
 - `POST /api/tasks/{id}/cancel`
 - `POST /api/tasks/{id}/retry`

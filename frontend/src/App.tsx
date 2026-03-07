@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, AuthRequiredError, clearAuthToken, getAuthToken } from './api/client'
-import type { ExecMode } from './types'
+import type { AgentDriver, ExecMode } from './types'
 import BoardPage from './pages/BoardPage'
 import TaskDetailPage from './pages/TaskDetailPage'
 import LoginPage from './pages/LoginPage'
@@ -24,17 +24,32 @@ function navigate(pathname: string, replace = false) {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
+function describeError(error: unknown): string {
+  if (!(error instanceof Error)) return 'unknown error'
+  const raw = error.message || 'unknown error'
+  try {
+    const parsed = JSON.parse(raw)
+    const detail = parsed?.detail
+    if (typeof detail === 'string' && detail.trim()) return detail
+    if (typeof detail?.message === 'string' && detail.message.trim()) return detail.message
+  } catch {
+    // keep raw text
+  }
+  return raw
+}
+
 export default function App() {
   const [route, setRoute] = useState<RouteState>(() => parseRoute(window.location.pathname))
   const [execMode, setExecModeState] = useState<ExecMode>('AGENTIC')
+  const [agentDriver, setAgentDriverState] = useState<AgentDriver>('CLAUDE_KIMI')
   const [authChecked, setAuthChecked] = useState(false)
   const [needLogin, setNeedLogin] = useState(false)
 
   useEffect(() => {
-    api
-      .getExecMode()
-      .then((r) => {
-        setExecModeState(r.exec_mode)
+    Promise.all([api.getExecMode(), api.getAgentDriver()])
+      .then(([execResp, driverResp]) => {
+        setExecModeState(execResp.exec_mode)
+        setAgentDriverState(driverResp.agent_driver)
         setNeedLogin(false)
       })
       .catch((e) => {
@@ -51,6 +66,14 @@ export default function App() {
 
   const setExecMode = (mode: ExecMode) => {
     api.setExecMode(mode).then((r) => setExecModeState(r.exec_mode)).catch(() => {})
+  }
+  const setAgentDriver = (driver: AgentDriver) => {
+    api
+      .setAgentDriver(driver)
+      .then((r) => setAgentDriverState(r.agent_driver))
+      .catch((e) => {
+        window.alert(`切换驱动失败：${describeError(e)}`)
+      })
   }
 
   useEffect(() => {
@@ -77,7 +100,12 @@ export default function App() {
       <LoginPage
         onSuccess={() => {
           setNeedLogin(false)
-          api.getExecMode().then((r) => setExecModeState(r.exec_mode)).catch(() => {})
+          Promise.all([api.getExecMode(), api.getAgentDriver()])
+            .then(([execResp, driverResp]) => {
+              setExecModeState(execResp.exec_mode)
+              setAgentDriverState(driverResp.agent_driver)
+            })
+            .catch(() => {})
         }}
       />
     )
@@ -100,6 +128,33 @@ export default function App() {
           onClick={() => setExecMode('FIXED')}
         >
           FIXED
+        </button>
+      </div>
+      <span className="app-exec-mode-label">驱动</span>
+      <div className="app-agent-driver-toggle">
+        <button
+          type="button"
+          className={agentDriver === 'CLAUDE' ? 'app-exec-mode-btn active' : 'app-exec-mode-btn'}
+          onClick={() => setAgentDriver('CLAUDE')}
+        >
+          CLAUDE
+        </button>
+        <button
+          type="button"
+          className={agentDriver === 'CLAUDE_KIMI' ? 'app-exec-mode-btn active' : 'app-exec-mode-btn'}
+          onClick={() => setAgentDriver('CLAUDE_KIMI')}
+        >
+          KIMI
+        </button>
+        <button
+          type="button"
+          className={agentDriver === 'CLAUDE_GLM' ? 'app-exec-mode-btn active' : 'app-exec-mode-btn'}
+          onClick={() => setAgentDriver('CLAUDE_GLM')}
+        >
+          GLM
+        </button>
+        <button type="button" className="app-exec-mode-btn app-exec-mode-btn-disabled" disabled>
+          CURSOR（预留）
         </button>
       </div>
       {getAuthToken() && (

@@ -36,6 +36,13 @@ class ExecMode(str, Enum):
     FIXED = "FIXED"
 
 
+class AgentDriver(str, Enum):
+    CLAUDE = "CLAUDE"
+    CLAUDE_KIMI = "CLAUDE_KIMI"
+    CLAUDE_GLM = "CLAUDE_GLM"
+    CURSOR_CLI = "CURSOR_CLI"
+
+
 class StrategyStepType(str, Enum):
     CODING = "CODING"
     COMMIT = "COMMIT"
@@ -178,6 +185,7 @@ class TaskCreateInput(BaseModel):
 
 class TaskRetryInput(BaseModel):
     reset_mode: TaskMode | None = None
+    followup: str | None = None
 
 
 class PlanConfirmInput(BaseModel):
@@ -209,6 +217,11 @@ class PlanBatchActionResult(BaseModel):
     counts: dict[str, int] = Field(default_factory=dict)
 
 
+class TaskDeleteResult(BaseModel):
+    ok: bool = True
+    task_id: str
+
+
 class RepoPatchInput(BaseModel):
     enabled: bool | None = None
     test_command: str | None = None
@@ -228,6 +241,8 @@ class BoardResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     python_env_selected: str
+    agent_driver: AgentDriver
+    agent_driver_ready: bool
     dependencies: dict[str, bool]
     paths: dict[str, str]
 

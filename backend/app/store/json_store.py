@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -375,22 +376,69 @@ class JsonStore:
             return self.update_task(task_id, {"status": TaskStatus.CANCELLED.value, "cancel_requested": True})
         return self.update_task(task_id, {"cancel_requested": True})
 
-    def reset_task_for_retry(self, task_id: str, reset_mode: TaskMode | None = None) -> Task | None:
+    def delete_task(self, task_id: str) -> Task | None:
+        deleted_row: dict[str, Any] | None = None
+
+        with self._lock("tasks"):
+            task_rows = self._read_json(self.tasks_file)
+            next_task_rows: list[dict[str, Any]] = []
+            for row in task_rows:
+                if row.get("id") == task_id and deleted_row is None:
+                    deleted_row = row
+                    continue
+                next_task_rows.append(row)
+
+            if deleted_row is None:
+                return None
+
+            self._write_json_atomic(self.tasks_file, next_task_rows)
+
+        with self._lock("runs"):
+            run_rows = self._read_json(self.runs_file)
+            next_run_rows = [row for row in run_rows if row.get("task_id") != task_id]
+            if len(next_run_rows) != len(run_rows):
+                self._write_json_atomic(self.runs_file, next_run_rows)
+
+        with self._lock("notifications"):
+            notification_rows = self._read_json(self.notifications_file)
+            next_notification_rows = [row for row in notification_rows if row.get("task_id") != task_id]
+            if len(next_notification_rows) != len(notification_rows):
+                self._write_json_atomic(self.notifications_file, next_notification_rows)
+
+        with self._lock(f"log-{task_id}"):
+            log_file = self.logs_dir / f"{task_id}.ndjson"
+            log_file.unlink(missing_ok=True)
+
+        artifacts_dir = self.state_dir / "artifacts" / task_id
+        shutil.rmtree(artifacts_dir, ignore_errors=True)
+
+        return Task.model_validate(deleted_row)
+
+    def reset_task_for_retry(
+        self,
+        task_id: str,
+        reset_mode: TaskMode | None = None,
+        followup: str | None = None,
+    ) -> Task | None:
         task = self.get_task(task_id)
         if task is None:
             return None
 
         mode = reset_mode.value if reset_mode else task.mode.value
+        patch: dict[str, Any] = {
+            "status": TaskStatus.TODO.value,
+            "mode": mode,
+            "error_code": "",
+            "error_message": "",
+            "cancel_requested": False,
+            "current_run_id": None,
+        }
+        if followup:
+            patch["prompt"] = f"{task.prompt}\n\n[用户追问]\n{followup}"
+
         return self.update_task(
             task_id,
-            {
-                "status": TaskStatus.TODO.value,
-                "mode": mode,
-                "error_code": "",
-                "error_message": "",
-                "cancel_requested": False,
-                "current_run_id": None,
-            },
+            patch,
         )
 
     def normalize_task_ids(self, task_ids: list[str]) -> list[str]:

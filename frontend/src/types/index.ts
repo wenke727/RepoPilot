@@ -13,6 +13,7 @@ export type TaskMode = 'PLAN' | 'EXEC'
 export type PermissionMode = 'BYPASS' | 'DEFAULT'
 
 export type ExecMode = "AGENTIC" | "FIXED"
+export type AgentDriver = "CLAUDE" | "CLAUDE_KIMI" | "CLAUDE_GLM" | "CURSOR_CLI"
 export type StrategyStepType =
   | "CODING"
   | "COMMIT"
@@ -170,4 +171,9 @@ export interface PlanBatchActionResult {
   updated: Task[]
   failed: BatchTaskFailure[]
   counts: PlanBatchActionCounts
+}
+
+export interface TaskDeleteResponse {
+  ok: boolean
+  task_id: string
 }

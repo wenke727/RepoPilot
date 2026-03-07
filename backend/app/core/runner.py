@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import threading
 import time
@@ -9,12 +10,13 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from app.config import Settings, get_exec_mode
+from app.config import Settings, get_agent_driver, get_exec_mode
 from app.core import git_ops
 from app.core.env import select_conda_env
 from app.core.plan_parser import parse_plan, plan_prompt
 from app.core.strategy import build_default_strategy
 from app.models import (
+    AgentDriver,
     PermissionMode,
     RepoConfig,
     Task,
@@ -29,6 +31,8 @@ from loguru import logger
 class TaskRunner:
     _RESUME_FALLBACK_ERROR_PATTERNS = (
         re.compile(r"session id .*not found", re.IGNORECASE),
+        re.compile(r"no conversation found with session id", re.IGNORECASE),
+        re.compile(r"conversation .*not found", re.IGNORECASE),
         re.compile(r"failed to resume", re.IGNORECASE),
         re.compile(r"unable to resume", re.IGNORECASE),
         re.compile(r"cannot resume", re.IGNORECASE),
@@ -84,6 +88,63 @@ class TaskRunner:
         task.claude_session_id = new_session_id
         return new_session_id, True
 
+    def _is_session_confirmed(self, task_id: str, session_id: str) -> bool:
+        if not session_id:
+            return False
+        events, _ = self.store.read_events(task_id, cursor=0)
+        for event in events:
+            if event.get("type") == "session_confirmed" and event.get("session_id") == session_id:
+                return True
+        return False
+
+    def _build_base_claude_args(
+        self,
+        task: Task,
+        prompt: str,
+        *,
+        session_id: str,
+        use_resume: bool,
+    ) -> list[str]:
+        args = [
+            "-p",
+            prompt,
+            "--output-format",
+            "stream-json",
+            "--verbose",
+        ]
+        if use_resume:
+            args.extend(["--resume", session_id])
+        else:
+            args.extend(["--session-id", session_id])
+
+        if task.permission_mode == PermissionMode.BYPASS:
+            args.extend(["--permission-mode", "bypassPermissions"])
+        else:
+            args.extend(["--permission-mode", "default"])
+        return args
+
+    def _build_shell_wrapped_cmd(self, template: str, args: list[str]) -> list[str]:
+        shell = (self.settings.agent_shell or "zsh").strip() or "zsh"
+        shell_script = f'{template} "$@"'
+        return [shell, "-ic", shell_script, "repopilot", *args]
+
+    def _build_driver_cmd(self, driver: str, args: list[str]) -> list[str]:
+        if driver == AgentDriver.CLAUDE.value:
+            return [self.settings.claude_cmd, *args]
+        if driver == AgentDriver.CLAUDE_KIMI.value:
+            template = (self.settings.claude_kimi_shell_template or "").strip()
+            if template:
+                return self._build_shell_wrapped_cmd(template, args)
+            return [self.settings.claude_kimi_cmd, *args]
+        if driver == AgentDriver.CLAUDE_GLM.value:
+            template = (self.settings.claude_glm_shell_template or "").strip()
+            if template:
+                return self._build_shell_wrapped_cmd(template, args)
+            return [self.settings.claude_glm_cmd, *args]
+        if driver == AgentDriver.CURSOR_CLI.value:
+            raise RuntimeError("CURSOR_CLI driver is reserved and not implemented")
+        raise RuntimeError(f"Unsupported agent driver: {driver}")
+
     def _build_claude_cmd(
         self,
         task: Task,
@@ -92,24 +153,9 @@ class TaskRunner:
         session_id: str,
         use_resume: bool,
     ) -> list[str]:
-        cmd = [
-            "claude",
-            "-p",
-            prompt,
-            "--output-format",
-            "stream-json",
-            "--verbose",
-        ]
-        if use_resume:
-            cmd.extend(["--resume", session_id])
-        else:
-            cmd.extend(["--session-id", session_id])
-
-        if task.permission_mode == PermissionMode.BYPASS:
-            cmd.extend(["--permission-mode", "bypassPermissions"])
-        else:
-            cmd.extend(["--permission-mode", "default"])
-        return cmd
+        args = self._build_base_claude_args(task, prompt, session_id=session_id, use_resume=use_resume)
+        driver = get_agent_driver(self.settings)
+        return self._build_driver_cmd(driver, args)
 
     def _is_resume_recoverable_error(self, text: str) -> bool:
         if not text.strip():
@@ -122,8 +168,9 @@ class TaskRunner:
         cmd: list[str],
         workdir: Path,
         timeout_seconds: int,
+        expected_session_id: str | None = None,
     ) -> tuple[int, str, bool]:
-        self.store.append_event(task.id, {"type": "command", "cmd": " ".join(cmd)})
+        self.store.append_event(task.id, {"type": "command", "cmd": shlex.join(cmd)})
         proc = subprocess.Popen(
             cmd,
             cwd=str(workdir),
@@ -140,12 +187,28 @@ class TaskRunner:
 
         try:
             assert proc.stdout is not None
+            session_confirmed_emitted = False
             for line in proc.stdout:
                 line = line.rstrip("\n")
                 if not line:
                     continue
 
                 self.store.append_event(task.id, {"type": "stream", "line": line})
+                if expected_session_id and not session_confirmed_emitted:
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        payload = None
+                    if isinstance(payload, dict) and payload.get("session_id") == expected_session_id:
+                        self.store.append_event(
+                            task.id,
+                            {
+                                "type": "session_confirmed",
+                                "session_id": expected_session_id,
+                                "message": f"Confirmed Claude session {expected_session_id}",
+                            },
+                        )
+                        session_confirmed_emitted = True
                 maybe_text = self._extract_text_from_stream_line(line)
                 if maybe_text:
                     collected_text.append(maybe_text)
@@ -180,7 +243,8 @@ class TaskRunner:
         timeout_seconds: int = 2700,
     ) -> tuple[int, str, bool]:
         session_id, created = self._ensure_task_session_id(task)
-        use_resume = not created
+        confirmed = self._is_session_confirmed(task.id, session_id)
+        use_resume = (not created) and confirmed
         if created:
             self.store.append_event(
                 task.id,
@@ -191,17 +255,33 @@ class TaskRunner:
                 },
             )
         else:
-            self.store.append_event(
-                task.id,
-                {
-                    "type": "session_resumed",
-                    "session_id": session_id,
-                    "message": f"Resuming Claude session {session_id}",
-                },
-            )
+            if use_resume:
+                self.store.append_event(
+                    task.id,
+                    {
+                        "type": "session_resumed",
+                        "session_id": session_id,
+                        "message": f"Resuming Claude session {session_id}",
+                    },
+                )
+            else:
+                self.store.append_event(
+                    task.id,
+                    {
+                        "type": "session_resume_skipped",
+                        "session_id": session_id,
+                        "message": f"Session {session_id} not confirmed yet; starting with --session-id",
+                    },
+                )
 
         cmd = self._build_claude_cmd(task, prompt, session_id=session_id, use_resume=use_resume)
-        exit_code, text, cancelled = self._run_claude_cmd(task, cmd, workdir, timeout_seconds)
+        exit_code, text, cancelled = self._run_claude_cmd(
+            task,
+            cmd,
+            workdir,
+            timeout_seconds,
+            expected_session_id=session_id,
+        )
 
         should_fallback = (
             use_resume
@@ -238,7 +318,13 @@ class TaskRunner:
         )
 
         fallback_cmd = self._build_claude_cmd(task, prompt, session_id=new_session_id, use_resume=False)
-        return self._run_claude_cmd(task, fallback_cmd, workdir, timeout_seconds)
+        return self._run_claude_cmd(
+            task,
+            fallback_cmd,
+            workdir,
+            timeout_seconds,
+            expected_session_id=new_session_id,
+        )
 
     def _extract_text_from_stream_line(self, line: str) -> str:
         try:
@@ -266,6 +352,29 @@ class TaskRunner:
         delta = payload.get("delta")
         if isinstance(delta, dict) and isinstance(delta.get("text"), str):
             chunks.append(delta["text"])
+
+        errors = payload.get("errors")
+        if isinstance(errors, list):
+            for item in errors:
+                if isinstance(item, str):
+                    chunks.append(item)
+                    continue
+                if isinstance(item, dict):
+                    for key in ("message", "error", "detail"):
+                        value = item.get(key)
+                        if isinstance(value, str):
+                            chunks.append(value)
+                            break
+
+        error = payload.get("error")
+        if isinstance(error, str):
+            chunks.append(error)
+        elif isinstance(error, dict):
+            for key in ("message", "error", "detail"):
+                value = error.get(key)
+                if isinstance(value, str):
+                    chunks.append(value)
+                    break
 
         return "\n".join(chunks).strip()
 

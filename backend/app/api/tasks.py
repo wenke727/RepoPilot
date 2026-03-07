@@ -14,6 +14,7 @@ from app.models import (
     PlanReviseInput,
     Task,
     TaskCreateInput,
+    TaskDeleteResult,
     TaskMode,
     TaskRetryInput,
     TaskStatus,
@@ -21,6 +22,7 @@ from app.models import (
 from app.store.json_store import JsonStore
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+RETRY_FOLLOWUP_MAX_CHARS = 4000
 
 
 @router.get("", response_model=list[Task])
@@ -52,6 +54,27 @@ def get_task(task_id: str, store: JsonStore = Depends(get_store)):
     return task
 
 
+@router.delete("/{task_id}", response_model=TaskDeleteResult)
+def delete_task(task_id: str, store: JsonStore = Depends(get_store), runner=Depends(get_runner)):
+    task = store.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    if task.status in {TaskStatus.RUNNING, TaskStatus.PLAN_RUNNING}:
+        raise HTTPException(status_code=409, detail=f"task status must not be RUNNING/PLAN_RUNNING, got {task.status}")
+
+    if task.mode == TaskMode.EXEC and task.current_run_id:
+        runner.cleanup_exec_worktree_for_task(
+            task,
+            trigger_status=task.status,
+            snapshot_on_failure=False,
+        )
+
+    deleted = store.delete_task(task_id)
+    if deleted is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return {"ok": True, "task_id": deleted.id}
+
+
 @router.get("/{task_id}/events", response_model=EventBatch)
 def get_events(task_id: str, cursor: int = Query(default=0), store: JsonStore = Depends(get_store)):
     task = store.get_task(task_id)
@@ -73,8 +96,24 @@ def cancel_task(task_id: str, store: JsonStore = Depends(get_store), scheduler=D
 
 @router.post("/{task_id}/retry", response_model=Task)
 def retry_task(task_id: str, payload: TaskRetryInput, store: JsonStore = Depends(get_store)):
+    current = store.get_task(task_id)
+    if current is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    if current.status not in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"task status must be FAILED/CANCELLED, got {current.status.value}",
+        )
+
+    followup = (payload.followup or "").strip()
+    if len(followup) > RETRY_FOLLOWUP_MAX_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"followup must be at most {RETRY_FOLLOWUP_MAX_CHARS} chars",
+        )
+
     mode = payload.reset_mode
-    task = store.reset_task_for_retry(task_id, reset_mode=mode)
+    task = store.reset_task_for_retry(task_id, reset_mode=mode, followup=followup or None)
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
     return task

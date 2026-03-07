@@ -12,4 +12,4 @@ router = APIRouter(prefix="/api", tags=["health"])
 
 @router.get("/health", response_model=HealthResponse)
 def health(settings: Settings = Depends(get_settings)):
-    return get_health(settings.root_dir)
+    return get_health(settings)

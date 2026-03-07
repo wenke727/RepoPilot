@@ -1,5 +1,5 @@
 import { useMemo, useState, type KeyboardEvent } from 'react'
-import { api } from '../api/client'
+import { api, AuthRequiredError } from '../api/client'
 import type { PermissionMode, TaskMode } from '../types'
 
 interface Props {
@@ -23,6 +23,44 @@ function deriveTitleFromPrompt(prompt: string) {
   return firstLine.slice(0, 36)
 }
 
+function getVoiceUnsupportedMessage(): string {
+  const hasGetUserMedia = Boolean(navigator.mediaDevices?.getUserMedia)
+  const hasMediaRecorder = typeof MediaRecorder !== "undefined"
+  const isSecureContext =
+    typeof window !== "undefined" &&
+    (window.isSecureContext ||
+      (window.location?.protocol === "https:" || /^localhost$|^127\./.test(window.location?.hostname ?? "")))
+  if (!isSecureContext) {
+    return "语音输入需要安全连接。请使用 https:// 访问本页面后再试（手机访问必须用 HTTPS）。"
+  }
+  if (!hasGetUserMedia) {
+    return "当前浏览器不支持麦克风访问。请使用 HTTPS 打开本页，或关闭系统「锁定模式」后重试。"
+  }
+  if (!hasMediaRecorder) {
+    return "当前浏览器不支持录音格式。请使用 Chrome、Edge 或 Safari 桌面版，或 iOS 14+ 的 Safari。"
+  }
+  return "当前浏览器不支持录音，请换用支持的浏览器或使用 HTTPS 访问。"
+}
+
+function getAudioFileInfo(mime: string | undefined): { name: string; type: string } {
+  if (!mime) {
+    return { name: "voice-input.webm", type: "audio/webm" }
+  }
+  if (mime.startsWith("audio/webm")) {
+    return { name: "voice-input.webm", type: "audio/webm" }
+  }
+  if (mime.startsWith("audio/mp4") || mime.startsWith("audio/x-m4a") || mime.startsWith("audio/m4a")) {
+    return { name: "voice-input.m4a", type: "audio/mp4" }
+  }
+  if (mime.startsWith("audio/mpeg")) {
+    return { name: "voice-input.mp3", type: "audio/mpeg" }
+  }
+  if (mime.startsWith("audio/wav") || mime.startsWith("audio/x-wav")) {
+    return { name: "voice-input.wav", type: "audio/wav" }
+  }
+  return { name: "voice-input.webm", type: "audio/webm" }
+}
+
 export default function TaskComposer({ selectedRepoId, onCreate }: Props) {
   const [prompt, setPrompt] = useState('')
   const [mode, setMode] = useState<TaskMode>('PLAN')
@@ -34,8 +72,10 @@ export default function TaskComposer({ selectedRepoId, onCreate }: Props) {
 
   async function onVoiceInput() {
     if (recording || transcribing) return
-    if (!navigator.mediaDevices?.getUserMedia) {
-      window.alert('当前浏览器不支持录音。')
+    const hasGetUserMedia = Boolean(navigator.mediaDevices?.getUserMedia)
+    const hasMediaRecorder = typeof MediaRecorder !== "undefined"
+    if (!hasGetUserMedia || !hasMediaRecorder) {
+      window.alert(getVoiceUnsupportedMessage())
       return
     }
 
@@ -62,14 +102,21 @@ export default function TaskComposer({ selectedRepoId, onCreate }: Props) {
 
       setRecording(false)
       setTranscribing(true)
-      const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' })
-      const audioFile = new File([blob], 'voice-input.webm', { type: blob.type || 'audio/webm' })
+      const { name, type } = getAudioFileInfo(recorder.mimeType)
+      const blob = new Blob(chunks, { type })
+      const audioFile = new File([blob], name, { type })
       const result = await api.transcribeAudio(audioFile, 'zh')
       const nextPrompt = [prompt.trim(), result.text.trim()].filter(Boolean).join('\n')
       setPrompt(nextPrompt)
     } catch (error) {
       console.error(error)
-      window.alert('语音输入失败，请检查麦克风权限或 OpenAI 配置。')
+      if (error instanceof AuthRequiredError) return
+      const msg = error instanceof Error ? error.message : ""
+      const hint =
+        msg && !msg.includes("getUserMedia")
+          ? `语音转写失败：${msg}`
+          : "语音输入失败，请检查麦克风权限或 OpenAI 配置。"
+      window.alert(hint)
     } finally {
       setRecording(false)
       setTranscribing(false)

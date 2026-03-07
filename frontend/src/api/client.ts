@@ -1,4 +1,5 @@
 import type {
+  AgentDriver,
   BoardResponse,
   EventBatch,
   ExecMode,
@@ -6,6 +7,7 @@ import type {
   PlanBatchActionResult,
   RepoConfig,
   Task,
+  TaskDeleteResponse,
   TaskMode,
   PermissionMode,
 } from '../types'
@@ -71,10 +73,15 @@ export const api = {
     priority: number
   }) => req<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(payload) }),
   getTask: (taskId: string) => req<Task>(`/api/tasks/${taskId}`),
+  deleteTask: (taskId: string) => req<TaskDeleteResponse>(`/api/tasks/${taskId}`, { method: 'DELETE' }),
   getTaskEvents: (taskId: string, cursor: number) =>
     req<EventBatch>(`/api/tasks/${taskId}/events?cursor=${cursor}`),
   cancelTask: (taskId: string) => req<Task>(`/api/tasks/${taskId}/cancel`, { method: 'POST' }),
-  retryTask: (taskId: string) => req<Task>(`/api/tasks/${taskId}/retry`, { method: 'POST', body: '{}' }),
+  retryTask: (taskId: string, payload?: { reset_mode?: TaskMode; followup?: string }) =>
+    req<Task>(`/api/tasks/${taskId}/retry`, {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {}),
+    }),
   markDone: (taskId: string) => req<Task>(`/api/tasks/${taskId}/done`, { method: 'POST' }),
   confirmPlan: (taskId: string, answers: Record<string, string>) =>
     req<Task>(`/api/tasks/${taskId}/plan/confirm`, {
@@ -104,16 +111,33 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ exec_mode: mode }),
     }),
+  getAgentDriver: () =>
+    req<{ agent_driver: AgentDriver; supported: AgentDriver[]; reserved: AgentDriver[] }>('/api/settings/agent-driver'),
+  setAgentDriver: (driver: AgentDriver) =>
+    req<{ agent_driver: AgentDriver; supported: AgentDriver[]; reserved: AgentDriver[] }>('/api/settings/agent-driver', {
+      method: 'PUT',
+      body: JSON.stringify({ agent_driver: driver }),
+    }),
   transcribeAudio: async (file: File, language = 'zh') => {
+    const token = getAuthToken()
+    const headers: Record<string, string> = {
+      "Content-Type": file.type || "application/octet-stream",
+      "X-Audio-Filename": file.name,
+    }
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`
+    }
     const payload = await file.arrayBuffer()
     const resp = await fetch(`/api/audio/transcribe?language=${encodeURIComponent(language)}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': file.type || 'application/octet-stream',
-        'X-Audio-Filename': file.name,
-      },
+      method: "POST",
+      headers,
       body: payload,
     })
+    if (resp.status === 401) {
+      clearAuthToken()
+      window.dispatchEvent(new CustomEvent("auth-required"))
+      throw new AuthRequiredError("Unauthorized")
+    }
     if (!resp.ok) {
       const text = await resp.text()
       throw new Error(text || `HTTP ${resp.status}`)

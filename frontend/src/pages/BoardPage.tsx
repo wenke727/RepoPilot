@@ -214,39 +214,6 @@ export default function BoardPage({ onOpenTask }: { onOpenTask: (taskId: string)
 
       <TaskComposer selectedRepoId={selectedRepoId} onCreate={createTask} />
 
-      <section className="batch-bar">
-        <div className="batch-bar-actions">
-          <span className="batch-count">已选 {selectedPlanCount} 项 Plan 审查任务</span>
-          <button className="button" onClick={clearPlanSelection} disabled={selectedPlanCount === 0 || batchSubmitting}>
-            清空选择
-          </button>
-          <button
-            className="button button-primary"
-            onClick={onBatchConfirmPlan}
-            disabled={selectedPlanCount === 0 || batchSubmitting}
-          >
-            批量确认并执行
-          </button>
-        </div>
-        <div className="batch-bar-revise">
-          <input
-            className="input"
-            value={batchFeedback}
-            onChange={(event) => setBatchFeedback(event.target.value)}
-            placeholder="批量退回反馈（将追加到每个任务）"
-          />
-          <button
-            className="button"
-            onClick={onBatchRevisePlan}
-            disabled={selectedPlanCount === 0 || batchSubmitting || !batchFeedback.trim()}
-          >
-            批量退回
-          </button>
-        </div>
-        {batchResultMessage && <div className="batch-message">{batchResultMessage}</div>}
-        {batchErrorMessage && <div className="batch-message batch-message-error">{batchErrorMessage}</div>}
-      </section>
-
       {error && <div className="alert">{error}</div>}
 
       <section className="board-grid">

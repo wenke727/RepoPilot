@@ -599,6 +599,7 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
   const [events, setEvents] = useState<TaskEvent[]>([])
   const [currentTask, setCurrentTask] = useState<Task | null>(null)
   const [feedback, setFeedback] = useState('')
+  const [retryFollowup, setRetryFollowup] = useState('')
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [groupFilters, setGroupFilters] = useState<Record<TaskEventDisplayGroup, boolean>>(DEFAULT_GROUP_FILTERS)
   const [followLogs, setFollowLogs] = useState(true)
@@ -613,6 +614,7 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
     setCurrentTask(null)
     setEvents([])
     setFeedback('')
+    setRetryFollowup('')
     setAnswers({})
     setGroupFilters(DEFAULT_GROUP_FILTERS)
     setFollowLogs(true)
@@ -666,6 +668,10 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
 
   const canPlanReview = currentTask?.status === 'PLAN_REVIEW' && !!currentTask.plan_result
   const canMarkDone = currentTask?.status === 'REVIEW'
+  const canRetry = currentTask != null && (currentTask.status === 'FAILED' || currentTask.status === 'CANCELLED')
+  const canDelete = currentTask != null && currentTask.status !== 'RUNNING' && currentTask.status !== 'PLAN_RUNNING'
+  const canFollowupInput =
+    currentTask != null && currentTask.status !== 'RUNNING' && currentTask.status !== 'PLAN_RUNNING'
 
   const normalizedPlan = useMemo(() => normalizePlanResult(currentTask?.plan_result), [currentTask?.plan_result])
   const questionList = useMemo(() => normalizedPlan.questions, [normalizedPlan])
@@ -804,7 +810,9 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
 
   async function retryTask() {
     if (!currentTask) return
-    await api.retryTask(currentTask.id)
+    const followup = retryFollowup.trim()
+    await api.retryTask(currentTask.id, followup ? { followup } : undefined)
+    setRetryFollowup('')
     setCurrentTask(await api.getTask(taskId))
   }
 
@@ -818,6 +826,14 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
     if (!currentTask) return
     await api.markDone(currentTask.id)
     setCurrentTask(await api.getTask(taskId))
+  }
+
+  async function deleteTask() {
+    if (!currentTask || !canDelete) return
+    const confirmed = window.confirm(`确认删除任务 ${currentTask.id} 吗？该操作不可恢复。`)
+    if (!confirmed) return
+    await api.deleteTask(currentTask.id)
+    onBackFallback()
   }
 
   function renderPlanPanel(panelClassName: string) {
@@ -926,17 +942,36 @@ export default function TaskDetailPage({ taskId, onBack, onBackFallback }: Props
           </div>
         )}
 
+        {canFollowupInput && (
+          <section className="task-followup-panel">
+            <h4>继续输入</h4>
+            <textarea
+              className="task-followup-textarea"
+              placeholder="可补充追问；留空则普通重试"
+              value={retryFollowup}
+              onChange={(e) => setRetryFollowup(e.target.value)}
+            />
+            <div className="muted task-followup-hint">重试仅支持 FAILED/CANCELLED 状态。</div>
+            {!canRetry && <div className="muted task-followup-hint">当前状态不可重试。</div>}
+          </section>
+        )}
+
         <div className="task-detail-actions task-detail-actions-main">
           {canMarkDone && (
             <button className="button button-primary" onClick={markDone}>
               标记完成
             </button>
           )}
-          <button className="button" onClick={retryTask}>
-            重试
-          </button>
+          {canRetry && (
+            <button className="button" onClick={retryTask}>
+              重试
+            </button>
+          )}
           <button className="button button-danger" onClick={cancelTask}>
             取消任务
+          </button>
+          <button className="button button-danger" onClick={deleteTask} disabled={!canDelete}>
+            删除任务
           </button>
         </div>
 

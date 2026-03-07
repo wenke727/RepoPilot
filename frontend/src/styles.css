@@ -735,6 +735,34 @@ select {
   background: #f4f8ff;
 }
 
+.task-followup-panel {
+  margin-top: 14px;
+  border: 1px solid #d8e2ef;
+  border-radius: 14px;
+  padding: 12px;
+  background: #f8fbff;
+}
+
+.task-followup-panel h4 {
+  margin: 0 0 8px;
+}
+
+.task-followup-textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+  color: var(--ink);
+}
+
+.task-followup-hint {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
 .plan-details-section {
   margin-top: 10px;
   padding-top: 10px;
@@ -1803,6 +1831,7 @@ select {
 .app-exec-mode-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 8px 22px;
   background: var(--surface);
@@ -1815,6 +1844,11 @@ select {
 }
 
 .app-exec-mode-toggle {
+  display: flex;
+  gap: 4px;
+}
+
+.app-agent-driver-toggle {
   display: flex;
   gap: 4px;
 }
@@ -1839,6 +1873,16 @@ select {
   border-color: #4d73ce;
   background: #e9f1ff;
   color: #4d73ce;
+}
+
+.app-exec-mode-btn-disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.app-exec-mode-btn-disabled:hover {
+  border-color: var(--line);
+  color: var(--muted);
 }
 
 .app-exec-mode-bar .app-logout-btn {
